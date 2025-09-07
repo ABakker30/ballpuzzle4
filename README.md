@@ -1,45 +1,53 @@
-# Ball Puzzle Solver
+# Ballpuzzle Solver
 
-A modern ball puzzle solver with clean architecture and multiple solving engines.
+Engine-native FCC solver for lattice puzzles using A–Y pieces.  
+Features both DFS and DLX engines, schema-validated event logs, and canonical solution verification.
 
-## Overview
+## Quickstart
 
-This project implements a ball puzzle solver using a face-centered cubic (FCC) lattice coordinate system. It features a modular architecture with pluggable solving engines, comprehensive piece libraries, and robust I/O handling.
-
-## Features
-
-- **Multiple Coordinate Systems**: FCC lattice with canonical transformations
-- **Piece Library**: Comprehensive FCC piece definitions
-- **Solving Engines**: Multiple algorithms including DFS
-- **Heuristics & Pruning**: Advanced optimization techniques
-- **Symmetry Breaking**: Efficient search space reduction
-- **Schema Validation**: JSON schema validation for all data formats
-- **Progress Reporting**: Real-time solving progress and metrics
-- **CLI Interface**: Command-line solving interface
-
-## Installation
+Install requirements (Python 3.10+):
 
 ```bash
-pip install -e .
+pip install -r requirements.txt
 ```
 
-## Usage
-
-### Solving Puzzles
-
+Solve a container:
 ```bash
-python -m cli.solve containers/tiny_4.fcc.json --engine dlx --pieces A=1,B=1
+python -m cli.solve tests/data/containers/tiny_4.fcc.json \
+  --engine dfs \
+  --pieces A=1 \
+  --eventlog out/events.jsonl \
+  --solution out/solution.json
 ```
 
-### Verifying Solutions
-
-Validate that a solution file is correct and complete:
-
+Verify a solution:
 ```bash
-python -m cli.verify solution.json container.json
+python -m cli.verify out/solution.json tests/data/containers/tiny_4.fcc.json
 ```
 
-Returns exit code 0 for valid solutions, 2 for invalid ones. See [docs/VERIFY.md](docs/VERIFY.md) for detailed usage and examples.
+Exit codes: 0 = valid, 2 = invalid.  
+See [docs/VERIFY.md](docs/VERIFY.md) for full details.
+
+## Engines
+
+**DFS**: depth-first with caps, heuristics, TT, dedup.  
+**DLX**: Algorithm X exact cover with row reduction, dominance pruning, canonical dedup.
+
+Both engines emit schema-validated JSONL logs (`snapshot.schema.json`).
+
+## Development
+
+Run all tests:
+```bash
+make test
+```
+
+Solve + verify in one step:
+```bash
+make demo
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for developer setup.
 
 ## Architecture
 
