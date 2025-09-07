@@ -25,9 +25,21 @@ pip install -e .
 
 ## Usage
 
+### Solving Puzzles
+
 ```bash
-python cli/solve.py --container containers/box16.fcc.json --pieces pieces/pieces_fcc_v1.json
+python -m cli.solve containers/tiny_4.fcc.json --engine dlx --pieces A=1,B=1
 ```
+
+### Verifying Solutions
+
+Validate that a solution file is correct and complete:
+
+```bash
+python -m cli.verify solution.json container.json
+```
+
+Returns exit code 0 for valid solutions, 2 for invalid ones. See [docs/VERIFY.md](docs/VERIFY.md) for detailed usage and examples.
 
 ## Architecture
 
