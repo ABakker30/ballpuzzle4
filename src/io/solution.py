@@ -1,10 +1,11 @@
 import json
 from typing import Dict, Any
 
-def write_solution(path: str, solution: Dict[str, Any], meta: Dict[str, Any]) -> None:
+def write_solution(path: str, solution: Dict[str, Any], meta: Dict[str, Any], pieces_used: Dict[str, int]) -> None:
     payload = {
         "version": 1,
         **solution,
+        "piecesUsed": pieces_used,
         "mode": meta.get("mode", "solver"),
         "solver": {
             "engine": meta["engine"],

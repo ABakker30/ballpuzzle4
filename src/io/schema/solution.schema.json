@@ -8,7 +8,13 @@
     "lattice":{"const":"fcc"},
     "containerCidSha256":{"type":"string"},
     "placements":{"type":"array"},
-    "piecesUsed":{"type":"object"},
+    "piecesUsed": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Z]$": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "sid_state_sha256":{"type":"string"},
     "sid_route_sha256":{"type":"string"},
     "solver":{"type":"object"}
