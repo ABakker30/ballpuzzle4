@@ -21,6 +21,7 @@ class DFSEngine(EngineProtocol):
         seed = int(options.get("seed", 0))
         caps = options.get("caps", {}) or {}
         max_nodes = int(caps.get("maxNodes", 0))
+        max_depth = int(caps.get("maxDepth", 0))
         max_results = int(options.get("max_results", 1))
         flags = options.get("flags", {}) or {}
         use_mrv = bool(flags.get("mrvPieces", False))
@@ -59,6 +60,8 @@ class DFSEngine(EngineProtocol):
         def dfs(depth: int) -> bool:
             nonlocal nodes, pruned, bestDepth, results
             if max_nodes and nodes >= max_nodes:
+                return False
+            if max_depth and depth > max_depth:
                 return False
             bestDepth = max(bestDepth, depth)
 

@@ -75,6 +75,7 @@ def main():
     ap.add_argument("--max-results", default="1")
     # NEW: simple caps option (nodes limit)
     ap.add_argument("--caps-max-nodes", type=int, default=0, help="max nodes before stopping (0 = unlimited)")
+    ap.add_argument("--caps-max-depth", type=int, default=0, help="max DFS depth before stopping (0 = unlimited)")
     # Optional heuristic toggles
     ap.add_argument("--mrv-pieces", action="store_true", help="enable MRV-based piece ordering")
     ap.add_argument("--support-bias", action="store_true", help="enable support-biased placement ordering")
@@ -100,7 +101,7 @@ def main():
     meta = {"engine": engine.name, "seed": args.seed,
             "flags": {"mrvPieces": bool(args.mrv_pieces), "supportBias": bool(args.support_bias)}}
     # Build options bundle
-    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes)}, "max_results": int(args.max_results)}
+    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth)}, "max_results": int(args.max_results)}
 
     emitted_solution = False
 
