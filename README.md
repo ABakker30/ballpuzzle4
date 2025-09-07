@@ -14,7 +14,7 @@ pip install -r requirements.txt
 Solve a container:
 ```bash
 python -m cli.solve tests/data/containers/tiny_4.fcc.json \
-  --engine dfs \
+  --engine engine-c \
   --pieces A=1 \
   --eventlog out/events.jsonl \
   --solution out/solution.json
@@ -31,9 +31,10 @@ See [docs/VERIFY.md](docs/VERIFY.md) for full details.
 ## Engines
 
 **DFS**: depth-first with caps, heuristics, TT, dedup.  
-**DLX**: Algorithm X exact cover with row reduction, dominance pruning, canonical dedup.
+**DLX**: Algorithm X exact cover with row reduction, dominance pruning, canonical dedup.  
+**Engine-C**: high-performance FCC solver with holes-first ordering, disconnected void pruning, and bitset operations.
 
-Both engines emit schema-validated JSONL logs (`snapshot.schema.json`).
+All engines emit schema-validated JSONL logs (`snapshot.schema.json`).
 
 See [docs/ENGINES.md](docs/ENGINES.md) for detailed comparison and usage guidance.
 
