@@ -40,12 +40,17 @@ class TestCanonicalCoordinateID:
     
     def test_rotated_coordinates_same_id(self):
         """Test that rotated coordinates produce same canonical ID."""
-        # L-shaped piece in different orientations
-        coords1 = {(0, 0, 0), (1, 0, 0), (0, 1, 0)}
-        coords2 = {(0, 0, 0), (0, 1, 0), (-1, 0, 0)}  # Rotated 90 degrees
+        from src.coords.symmetry_fcc import ROTATIONS_24, apply_rot
         
-        cid1 = self.canonical.get_canonical_id(coords1)
-        cid2 = self.canonical.get_canonical_id(coords2)
+        # An L-shape in engine lattice
+        coords1 = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        
+        # Pick a true engine rotation and apply it
+        R = ROTATIONS_24[5]  # any index from the 24 FCC rotations
+        coords2 = [apply_rot(R, p) for p in coords1]
+        
+        cid1 = self.canonical.get_canonical_id(set(coords1))
+        cid2 = self.canonical.get_canonical_id(set(coords2))
         
         assert cid1 == cid2
     

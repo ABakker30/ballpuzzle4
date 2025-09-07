@@ -1,9 +1,53 @@
 """FCC piece library version 1 - standard ball puzzle pieces."""
 
-from typing import Dict, List, Set, Tuple
-import numpy as np
-from ..coords.lattice_fcc import FCCLattice
-from ..coords.canonical import CanonicalCoordinate
+from __future__ import annotations
+from typing import Dict, List, Tuple
+from ..coords.symmetry_fcc import ROTATIONS_24, apply_rot
+import json
+import importlib.resources as resources
+
+I3 = Tuple[int, int, int]
+
+class PieceDef:
+    """Definition of a single piece with all orientations."""
+    
+    def __init__(self, name: str, atoms: List[I3]):
+        self.name = name
+        
+        # Normalize to include (0,0,0)
+        min_x = min(a[0] for a in atoms)
+        min_y = min(a[1] for a in atoms) 
+        min_z = min(a[2] for a in atoms)
+        shifted = [(x - min_x, y - min_y, z - min_z) for (x, y, z) in atoms]
+        self.atoms: Tuple[I3, ...] = tuple(sorted(shifted))
+        
+        # Generate all unique orientations under FCC rotations
+        seen = set()
+        orients = []
+        for R in ROTATIONS_24:
+            rotated = tuple(sorted(apply_rot(R, a) for a in self.atoms))
+            if rotated not in seen:
+                seen.add(rotated)
+                orients.append(rotated)
+        self.orientations: List[Tuple[I3, ...]] = orients
+
+def load_fcc_A_to_Y() -> Dict[str, PieceDef]:
+    """Load FCC A-Y piece definitions from JSON data."""
+    # Load from data file
+    try:
+        with resources.files(__package__).joinpath("data/pieces_fcc_AtoY.json").open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (FileNotFoundError, ModuleNotFoundError):
+        # Fallback for development/testing
+        import os
+        data_path = os.path.join(os.path.dirname(__file__), "data", "pieces_fcc_AtoY.json")
+        with open(data_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    
+    out: Dict[str, PieceDef] = {}
+    for k, atoms in raw.items():
+        out[k] = PieceDef(k, [tuple(map(int, a)) for a in atoms])
+    return out
 
 
 class FCCPieceLibraryV1:

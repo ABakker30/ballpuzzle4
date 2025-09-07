@@ -1,9 +1,56 @@
 """Canonical coordinate transformations and representations."""
 
-from typing import Tuple, List, Set
+from typing import Tuple, List, Set, Iterable
 import numpy as np
 import hashlib
 from .lattice_fcc import FCCLattice
+
+I3 = Tuple[int,int,int]
+
+def canonicalize(cells: Iterable[I3]) -> List[I3]:
+    cells = list(cells)
+    if not cells: return []
+    minx = min(x for x,_,_ in cells)
+    miny = min(y for _,y,_ in cells)
+    minz = min(z for *_,z in cells)
+    shifted = [(x-minx, y-miny, z-minz) for (x,y,z) in cells]
+    return sorted(shifted)  # lexicographic (x,y,z)
+
+def canonical_id_text(cells: Iterable[I3]) -> str:
+    """Stable, human-readable canonical ID text: 'x,y,z_x,y,z_...'"""
+    canon = canonicalize(cells)
+    return "_".join(f"{x},{y},{z}" for (x,y,z) in canon)
+
+def cid_sha256(cells: Iterable[I3]) -> str:
+    canon = canonicalize(cells)
+    payload = ",".join(f"{x}:{y}:{z}" for x,y,z in canon).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+# --- NEW: rotation-invariant canonicalization ---
+def canonicalize_rot(cells: Iterable[I3]) -> List[I3]:
+    """Translation + rotation invariant representative using FCC 24-rot canon."""
+    from .symmetry_fcc import canonical_atom_tuple
+    cells = list(cells)
+    if not cells: return []
+    # shift-to-origin first (stable) then minimize over rotations
+    shifted = canonicalize(cells)             # translation invariance
+    canon_rot = canonical_atom_tuple(shifted) # rotation invariance (M4)
+    # shift canon_rot to positive so text is stable
+    minx = min(x for x,_,_ in canon_rot)
+    miny = min(y for _,y,_ in canon_rot)
+    minz = min(z for *_,z in canon_rot)
+    normalized = [(x-minx, y-miny, z-minz) for (x,y,z) in canon_rot]
+    return sorted(normalized)
+
+def canonical_id_text_rot(cells: Iterable[I3]) -> str:
+    canon = canonicalize_rot(cells)
+    return "_".join(f"{x},{y},{z}" for (x,y,z) in canon)
+
+def cid_sha256_rot(cells: Iterable[I3], lattice: str = "fcc") -> str:
+    """Rotation-invariant CID (if tests require). Includes lattice tag to avoid cross-lattice collisions."""
+    canon = canonicalize_rot(cells)
+    payload = (lattice + "|" + ",".join(f"{x}:{y}:{z}" for x,y,z in canon)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 class CanonicalCoordinate:
@@ -148,9 +195,7 @@ class CanonicalCoordinate:
         Returns:
             Canonical string identifier
         """
-        canonical = self.to_canonical(coords)
-        sorted_coords = sorted(canonical)
-        return "_".join(f"{x},{y},{z}" for x, y, z in sorted_coords)
+        return canonical_id_text_rot(coords)
 
 
 def cid_sha256(cells: List[Tuple[int, int, int]]) -> str:
