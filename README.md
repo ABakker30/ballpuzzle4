@@ -35,6 +35,8 @@ See [docs/VERIFY.md](docs/VERIFY.md) for full details.
 
 Both engines emit schema-validated JSONL logs (`snapshot.schema.json`).
 
+See [docs/ENGINES.md](docs/ENGINES.md) for detailed comparison and usage guidance.
+
 ## Development
 
 Run all tests:

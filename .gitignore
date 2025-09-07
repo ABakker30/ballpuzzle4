@@ -171,3 +171,6 @@ temp/
 # Project data outputs
 events.jsonl
 solution.json
+
+# Container conversion backups
+*.json.bak
