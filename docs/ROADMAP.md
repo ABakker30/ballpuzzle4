@@ -40,14 +40,25 @@ When a milestone is completed, it is tagged (v0.x.0) and logged in `CHANGELOG.md
 - **Planned Tag:** v0.3.0
 
 ### M4 — Symmetry & small-container mode
-- [ ] Implement container symmetry group (24 rotations).
-- [ ] Add anchor rule (canonical placement).
-- [ ] Add transposition table (mask keyed).
-- [ ] Enable tie-shuffle in small-container mode (|cells| ≤ 32).
-- [ ] Add tests: no rotated duplicate solutions; node count reduction.
-- **Planned Tag:** v0.4.0
+- [x] Implement container symmetry group (24 rotations).
+- [x] Add anchor rule (canonical placement).
+- [x] Add transposition table (mask keyed).
+- [x] Enable tie-shuffle in small-container mode (|cells| ≤ 32).
+- [x] Add tests: no rotated duplicate solutions; node count reduction.
+- **Completed Tag:** v0.4.0
 
-### M5 — Documentation & release polish
+### M4.5 — Surface Small-Container Mode (completed)
+- [x] Expose symmetry-group size, small-container flag, seed, and TT presence in event log.
+- [x] Add visibility fields without changing search behavior.
+- **Completed Tag:** v0.4.1
+
+### M5 — Minimal DFS Engine (completed)
+- [x] Implement real DFS engine using TT, tie-shuffle, and anchor rule.
+- [x] Prove control-flow and determinism with synthetic placements.
+- [x] Add comprehensive tests for DFS scaffold and deterministic behavior.
+- **Completed Tag:** v0.5.0
+
+### M6 — Documentation & release polish
 - [ ] Expand `ENGINE_OVERVIEW.md` with diagrams and examples.
 - [ ] Add ADRs for: engine API, inventory, symmetry-breaking.
 - [ ] Update `CHANGELOG.md` and `ROADMAP.md`.
