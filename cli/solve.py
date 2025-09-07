@@ -72,6 +72,7 @@ def main():
     ap.add_argument("--eventlog", default="events.jsonl")
     ap.add_argument("--solution", default="solution.json")
     ap.add_argument("--seed", type=int, default=9000)
+    ap.add_argument("--max-results", type=int, default=1, help="maximum number of solutions to find")
     # NEW: inventory inputs
     ap.add_argument("--inventory", help="path to inventory JSON (with {\"pieces\":{...}})")
     ap.add_argument("--pieces", help="inline pieces, e.g. A=1,B=2 (takes precedence over --inventory)")
@@ -93,9 +94,12 @@ def main():
     engine = get_engine(args.engine)
     meta = {"engine": engine.name, "seed": args.seed, "flags": {}}
 
+    emitted_solution = False
+
     with open_eventlog(args.eventlog) as fp:
         t0 = time.time()
-        for ev in engine.solve(container, inventory, pieces, {"seed": args.seed, "flags": {}}):
+        options = {"seed": args.seed, "max_results": args.max_results, "flags": {}}
+        for ev in engine.solve(container, inventory, pieces, options):
             ev.setdefault("t_ms", int((time.time()-t0)*1000))
             write_event(ev, fp)
             if ev["type"] == "solution":
@@ -104,6 +108,21 @@ def main():
                 if "piecesUsed" not in sol:
                     sol["piecesUsed"] = pieces_used
                 write_solution(args.solution, sol, meta, pieces_used)
+                emitted_solution = True
+
+        # If the engine emitted no 'solution' event, write a stub to avoid missing file
+        if not emitted_solution:
+            # minimal "no-solution" payload
+            stub = {
+                "containerCidSha256": container.get("cid_sha256", "unknown"),
+                "lattice": "fcc",
+                "piecesUsed": pieces_used,
+                "placements": [],
+                "sid_state_sha256": "no_solution",
+                "sid_route_sha256": "no_solution",
+                "sid_state_canon_sha256": "no_solution",
+            }
+            write_solution(args.solution, stub, meta, pieces_used)
 
 if __name__ == "__main__":
     main()

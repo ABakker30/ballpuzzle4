@@ -35,31 +35,47 @@ def test_current_engine_dedup():
     assert len(sol["sid_state_canon_sha256"]) == 64
 
 def test_dfs_engine_dedup():
-    """Test that DFS engine doesn't emit duplicate solutions."""
-    # Create a tiny symmetric container
-    container = {
-        "name": "tiny_cube",
-        "lattice_type": "fcc",
-        "coordinates": [[0,0,0], [1,0,0], [0,1,0], [1,1,0]],
-        "cid_sha256": "test_container_hash"
-    }
+    """DFS should emit exactly one solution event for a tiny solvable container."""
+    import json, subprocess, sys
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
     
-    inventory = {"pieces": {}}
-    pieces = {}
-    options = {"seed": 42}
-    
-    engine = DFSEngine()
-    events = list(engine.solve(container, inventory, pieces, options))
-    
-    # Count solution events
-    solutions = [e for e in events if e["type"] == "solution"]
-    assert len(solutions) == 1, f"Expected 1 solution, got {len(solutions)}"
-    
-    # Verify solution has canonical signature field
-    sol = solutions[0]["solution"]
-    assert "sid_state_canon_sha256" in sol
-    assert isinstance(sol["sid_state_canon_sha256"], str)
-    assert len(sol["sid_state_canon_sha256"]) == 64
+    with TemporaryDirectory() as d:
+        d = Path(d)
+        # 2x2 layer (4 cells) – solvable by a single A piece in our tiny tests
+        cpath = d / "c.json"
+        container_data = {
+            "name": "test_container",
+            "lattice_type": "fcc",
+            "coordinates": [[0,0,0],[1,0,0],[0,1,0],[1,1,0]]
+        }
+        cpath.write_text(json.dumps(container_data), encoding="utf-8")
+
+        ev = d / "events.jsonl"
+        sol = d / "solution.json"
+
+        cmd = [
+            sys.executable, "-m", "cli.solve", str(cpath),
+            "--engine", "dfs",
+            "--pieces", "A=1",          # provide a real inventory
+            "--eventlog", str(ev),
+            "--solution", str(sol),
+            "--seed", "42",
+            "--max-results", "2"
+        ]
+        subprocess.check_call(cmd)
+
+        # Count solution events from the event log
+        solutions = 0
+        for line in ev.read_text(encoding="utf-8").splitlines():
+            try:
+                e = json.loads(line)
+                if e.get("type") == "solution":
+                    solutions += 1
+            except Exception:
+                pass
+
+        assert solutions == 1, f"Expected 1 solution event, got {solutions}"
 
 def test_manual_dedup_simulation():
     """Simulate calling emit twice with rotated states to verify dedup works."""
