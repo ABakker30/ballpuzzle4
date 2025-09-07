@@ -1,0 +1,17 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"Solution",
+  "type":"object",
+  "required":["version","lattice","containerCidSha256","placements","piecesUsed","sid_state_sha256","sid_route_sha256","solver"],
+  "properties":{
+    "version":{"const":1},
+    "lattice":{"const":"fcc"},
+    "containerCidSha256":{"type":"string"},
+    "placements":{"type":"array"},
+    "piecesUsed":{"type":"object"},
+    "sid_state_sha256":{"type":"string"},
+    "sid_route_sha256":{"type":"string"},
+    "solver":{"type":"object"}
+  },
+  "additionalProperties":true
+}
