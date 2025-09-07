@@ -146,19 +146,46 @@ progress = ProgressTracker(use_tqdm=True)
 2. Add new pruning conditions
 3. Integrate with existing pruning pipeline
 
+## Canonical Solution Identity
+
+### Problem Statement
+Without deduplication, solver engines can emit multiple solutions that are rotational duplicates of each other under container symmetry. This creates noise in results and wastes computational resources.
+
+### Solution Approach
+The solver implements canonical solution identity to ensure each unique solution is emitted only once:
+
+1. **Canonical State Signature**: Each final occupied state is reduced to a canonical form using `canonical_atom_tuple()` from the symmetry utilities
+2. **SHA256 Hashing**: The canonical representation is hashed to produce a unique `sid_state_canon_sha256` identifier
+3. **Deduplication**: Engines maintain an in-memory set of emitted signatures and skip solutions with duplicate signatures
+
+### Implementation Details
+- `src/io/solution_sig.py` provides `canonical_state_signature()` function
+- Both `current_engine.py` and `dfs_engine.py` integrate deduplication before solution emission
+- Solution JSON includes `sid_state_canon_sha256` field for external verification
+- All operations use FCC lattice integer coordinates (no world-space math)
+
+### Benefits
+- Eliminates rotated duplicate solutions from output
+- Reduces result set size and improves clarity
+- Maintains deterministic behavior under container symmetries
+- Enables efficient solution comparison and verification
+
 ## Performance Considerations
 
 ### Memory Usage
 - Transposition table size affects memory consumption
 - Piece orientations are cached for efficiency
 - Progress history can accumulate over long runs
+- Solution signature tracking adds minimal memory overhead
 
 ### Time Complexity
 - Exponential in worst case (NP-complete problem)
 - Optimizations provide significant practical speedup
 - Timeout mechanisms prevent infinite runs
+- Canonical signature computation is O(n log n) where n is occupied cells
 
 ### Scalability
 - Designed for puzzles up to ~100 pieces
 - Performance degrades with larger search spaces
 - Consider problem decomposition for very large puzzles
+- Signature deduplication scales well with solution count

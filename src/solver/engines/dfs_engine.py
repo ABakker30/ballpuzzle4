@@ -1,9 +1,10 @@
-from typing import Iterator, List, Tuple, Dict, Any
+from typing import Iterator, List, Tuple, Dict, Any, Set
 import time
 from ..engine_api import EngineProtocol, EngineOptions, SolveEvent
 from ...solver.tt import OccMask, SeenMasks
 from ...solver.symbreak import container_symmetry_group, anchor_rule_filter
 from ...solver.heuristics import tie_shuffle
+from ...io.solution_sig import canonical_state_signature, extract_occupied_cells_from_placements
 
 I3 = Tuple[int,int,int]
 
@@ -24,9 +25,13 @@ class DFSEngine(EngineProtocol):
         seed = int(options.get("seed", 0))
         cells: List[I3] = sorted(tuple(map(int,c)) for c in container["coordinates"])
         smallMode = len(cells) <= 32
-        symGroup = len(container_symmetry_group(cells))
+        symGroup = container_symmetry_group(cells)
+        symGroupSize = len(symGroup)
         tt = SeenMasks()
         occ = OccMask(cells)
+        
+        # Track emitted solution signatures for deduplication
+        emitted_sigs: Set[str] = set()
 
         # synthetic "candidate generator": choose next index and offer up to 3 trivial placements:
         def candidates_at(depth: int) -> List[List[I3]]:
@@ -58,7 +63,7 @@ class DFSEngine(EngineProtocol):
                         ("A", tuple(sorted([min_cell]))),
                         ("A", tuple(sorted([min_cell])))]
                 # it will deduplicate; keep count parity with cands
-                filtered = anchor_rule_filter(pack, min_cell, "A", container_symmetry_group(cells))
+                filtered = anchor_rule_filter(pack, min_cell, "A", symGroup)
                 # if it filtered down to 1, trim candidates as well
                 if len(filtered) == 1 and len(cands) > 1:
                     cands = cands[:1]
@@ -87,16 +92,27 @@ class DFSEngine(EngineProtocol):
         # drive dfs with periodic ticks
         solved = dfs(0)
 
-        # Emit a synthetic solution payload either way (to exercise path)
-        sol = {
-            "containerCidSha256": container["cid_sha256"],
-            "lattice": "fcc",
-            "piecesUsed": inventory.get("pieces", {}),
-            "placements": [],  # real placements wired later
-            "sid_state_sha256": "dfs_stub_state",
-            "sid_route_sha256": "dfs_stub_route",
-        }
-        yield {"t_ms": int((time.time()-t0)*1000), "type": "solution", "solution": sol}
+        # Create a synthetic solution with empty placements for testing
+        placements = []
+        occupied_cells = extract_occupied_cells_from_placements(placements)
+        
+        # Compute canonical signature
+        sig = canonical_state_signature(occupied_cells, symGroup)
+        
+        # Check for duplicate before emitting
+        if sig not in emitted_sigs:
+            emitted_sigs.add(sig)
+            sol = {
+                "containerCidSha256": container["cid_sha256"],
+                "lattice": "fcc",
+                "piecesUsed": inventory.get("pieces", {}),
+                "placements": placements,
+                "sid_state_sha256": "dfs_stub_state",
+                "sid_route_sha256": "dfs_stub_route",
+                "sid_state_canon_sha256": sig,
+            }
+            yield {"t_ms": int((time.time()-t0)*1000), "type": "solution", "solution": sol}
+        
         yield {"t_ms": int((time.time()-t0)*1000), "type": "done",
-               "metrics": {"solutions": 1 if solved else 1, "nodes": nodes, "pruned": pruned,
-                           "bestDepth": bestDepth, "smallMode": smallMode, "symGroup": symGroup, "seed": seed}}
+               "metrics": {"solutions": len(emitted_sigs), "nodes": nodes, "pruned": pruned,
+                           "bestDepth": bestDepth, "smallMode": smallMode, "symGroup": symGroupSize, "seed": seed}}
