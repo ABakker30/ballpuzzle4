@@ -68,7 +68,7 @@ def _resolve_inventory(args) -> dict[str,int]:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("container", help="path to FCC container json")
-    ap.add_argument("--engine", default="current", choices=["current","dfs","dlx","legacy"])
+    ap.add_argument("--engine", default="current", choices=["current","dfs","dlx","legacy","engine-c"])
     ap.add_argument("--eventlog", default="events.jsonl")
     ap.add_argument("--solution", default="solution.json")
     ap.add_argument("--seed", type=int, default=9000)
@@ -97,7 +97,9 @@ def main():
 
     # For now we pass these through; solver engines can ignore them until M4+
     inventory = {"pieces": pieces_used}
-    pieces = {}  # (your piece library wiring comes later)
+    # Load piece library
+    from src.pieces.library_fcc_v1 import load_fcc_A_to_Y
+    pieces = load_fcc_A_to_Y()
 
     engine = get_engine(args.engine)
     meta = {"engine": engine.name, "seed": args.seed,
