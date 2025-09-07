@@ -76,6 +76,7 @@ def main():
     # NEW: simple caps option (nodes limit)
     ap.add_argument("--caps-max-nodes", type=int, default=0, help="max nodes before stopping (0 = unlimited)")
     ap.add_argument("--caps-max-depth", type=int, default=0, help="max DFS depth before stopping (0 = unlimited)")
+    ap.add_argument("--progress-interval-ms", type=int, default=0, help="emit tick events roughly every N milliseconds (0 = disabled)")
     # Optional heuristic toggles
     ap.add_argument("--mrv-pieces", action="store_true", help="enable MRV-based piece ordering")
     ap.add_argument("--support-bias", action="store_true", help="enable support-biased placement ordering")
@@ -101,16 +102,26 @@ def main():
     meta = {"engine": engine.name, "seed": args.seed,
             "flags": {"mrvPieces": bool(args.mrv_pieces), "supportBias": bool(args.support_bias)}}
     # Build options bundle
-    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth)}, "max_results": int(args.max_results)}
+    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms)}
 
     emitted_solution = False
+
+    # Schema validation setup
+    from src.io.schema import load_schema
+    from jsonschema import validate as _validate
+    _event_schema = load_schema("snapshot.schema.json")
+    
+    def _write(ev, fp):
+        ev = {"v": 1, **ev}
+        _validate(instance=ev, schema=_event_schema)
+        write_event(ev, fp)
 
     with open_eventlog(args.eventlog) as fp:
         import time
         t0 = time.time()
         for ev in engine.solve(container, inventory, pieces, options):
             ev.setdefault("t_ms", int((time.time()-t0)*1000))
-            write_event(ev, fp)
+            _write(ev, fp)
             if ev["type"] == "solution":
                 # Ensure piecesUsed is included exactly as resolved
                 sol = dict(ev["solution"])

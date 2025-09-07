@@ -26,6 +26,8 @@ class DFSEngine(EngineProtocol):
         flags = options.get("flags", {}) or {}
         use_mrv = bool(flags.get("mrvPieces", False))
         use_support = bool(flags.get("supportBias", False))
+        progress_every = int(options.get("progress_interval_ms", 0))
+        last_tick_ms = 0
 
         cells_sorted: List[I3] = sorted(tuple(map(int,c)) for c in container["coordinates"])
         container_set = set(cells_sorted)
@@ -56,6 +58,18 @@ class DFSEngine(EngineProtocol):
         # piece library (load lazily via pieces.library if not prewired)
         from ...pieces.library_fcc_v1 import load_fcc_A_to_Y
         lib = load_fcc_A_to_Y()
+
+        def maybe_tick(current_depth):
+            nonlocal last_tick_ms
+            if not progress_every:
+                return
+            import time
+            now = int((time.time()-t0)*1000)
+            if now - last_tick_ms >= progress_every:
+                last_tick_ms = now
+                yield {"t_ms": now, "type":"tick",
+                       "metrics":{"nodes": nodes, "pruned": pruned, "depth": current_depth,
+                                  "bestDepth": bestDepth, "solutions": results}}
 
         def dfs(depth: int) -> bool:
             nonlocal nodes, pruned, bestDepth, results
@@ -134,6 +148,9 @@ class DFSEngine(EngineProtocol):
                     occupied_set.difference_update(pl.covered); occ.mask = old_mask; bag.inc(pl.piece)
                     continue
                 stack.append(pl)
+                # Emit tick events before recursion
+                for ev in maybe_tick(depth):
+                    yield ev
                 # Recurse
                 stop = False
                 for ev in dfs(depth+1):

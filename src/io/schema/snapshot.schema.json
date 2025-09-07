@@ -1,143 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ballpuzzle.example.com/schemas/snapshot.schema.json",
-  "title": "Snapshot Schema",
-  "description": "Schema for ball puzzle solving state snapshots",
+  "$id": "snapshot.schema.json",
+  "title": "Engine Event",
   "type": "object",
+  "required": ["v","t_ms","type"],
   "properties": {
-    "timestamp": {
-      "type": "string",
-      "format": "date-time",
-      "description": "When the snapshot was taken"
-    },
-    "solver_state": {
-      "type": "object",
-      "description": "Current state of the solver",
-      "properties": {
-        "engine": {
-          "type": "string",
-          "description": "Name of the solving engine"
-        },
-        "status": {
-          "type": "string",
-          "enum": ["not_started", "running", "solved", "no_solution", "timeout", "error", "cancelled"],
-          "description": "Current solver status"
-        },
-        "nodes_explored": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Number of search nodes explored"
-        },
-        "current_depth": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Current search depth"
-        },
-        "max_depth_reached": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Maximum search depth reached"
-        },
-        "time_elapsed": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Time elapsed in seconds"
-        }
-      },
-      "required": ["engine", "status", "nodes_explored", "time_elapsed"],
-      "additionalProperties": false
-    },
-    "current_placement": {
-      "type": "object",
-      "description": "Current piece placement state",
-      "properties": {
-        "placed_pieces": {
-          "type": "array",
-          "description": "List of placed pieces",
-          "items": {
-            "type": "object",
-            "properties": {
-              "piece_name": {
-                "type": "string",
-                "description": "Name of the placed piece"
-              },
-              "coordinates": {
-                "type": "array",
-                "description": "Coordinates where piece is placed",
-                "items": {
-                  "type": "array",
-                  "items": {
-                    "type": "integer"
-                  },
-                  "minItems": 3,
-                  "maxItems": 3
-                },
-                "minItems": 1
-              }
-            },
-            "required": ["piece_name", "coordinates"],
-            "additionalProperties": false
-          }
-        },
-        "remaining_inventory": {
-          "type": "object",
-          "description": "Remaining pieces in inventory",
-          "patternProperties": {
-            "^[a-zA-Z0-9_]+$": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "required": ["placed_pieces", "remaining_inventory"],
-      "additionalProperties": false
-    },
-    "container": {
-      "type": "object",
-      "description": "Reference to the container being solved",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Container name"
-        },
-        "coordinates": {
-          "type": "array",
-          "description": "Container coordinates",
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "integer"
-            },
-            "minItems": 3,
-            "maxItems": 3
-          },
-          "minItems": 1
-        }
-      },
-      "required": ["name", "coordinates"],
-      "additionalProperties": false
-    },
-    "metadata": {
-      "type": "object",
-      "description": "Additional metadata",
-      "properties": {
-        "snapshot_id": {
-          "type": "string",
-          "description": "Unique identifier for this snapshot"
-        },
-        "session_id": {
-          "type": "string",
-          "description": "Solving session identifier"
-        },
-        "notes": {
-          "type": "string",
-          "description": "Optional notes about this snapshot"
-        }
-      }
-    }
+    "v": { "const": 1 },
+    "t_ms": { "type": "integer", "minimum": 0 },
+    "type": { "type": "string", "enum": ["tick","solution","done"] },
+    "metrics": { "type": "object" },
+    "solution": { "type": "object" }
   },
-  "required": ["timestamp", "solver_state", "current_placement", "container"],
-  "additionalProperties": false
+  "additionalProperties": true
 }
