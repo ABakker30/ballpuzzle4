@@ -76,6 +76,7 @@ def main():
     # NEW: simple caps option (nodes limit)
     ap.add_argument("--caps-max-nodes", type=int, default=0, help="max nodes before stopping (0 = unlimited)")
     ap.add_argument("--caps-max-depth", type=int, default=0, help="max DFS depth before stopping (0 = unlimited)")
+    ap.add_argument("--caps-max-rows", type=int, default=0, help="max DLX rows to build (0 = unlimited)")
     ap.add_argument("--progress-interval-ms", type=int, default=0, help="emit tick events roughly every N milliseconds (0 = disabled)")
     # Optional heuristic toggles
     ap.add_argument("--mrv-pieces", action="store_true", help="enable MRV-based piece ordering")
@@ -102,7 +103,7 @@ def main():
     meta = {"engine": engine.name, "seed": args.seed,
             "flags": {"mrvPieces": bool(args.mrv_pieces), "supportBias": bool(args.support_bias)}}
     # Build options bundle
-    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms)}
+    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth), "maxRows": int(args.caps_max_rows)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms)}
 
     emitted_solution = False
 
