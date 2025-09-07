@@ -72,7 +72,12 @@ def main():
     ap.add_argument("--eventlog", default="events.jsonl")
     ap.add_argument("--solution", default="solution.json")
     ap.add_argument("--seed", type=int, default=9000)
-    ap.add_argument("--max-results", type=int, default=1, help="maximum number of solutions to find")
+    ap.add_argument("--max-results", default="1")
+    # NEW: simple caps option (nodes limit)
+    ap.add_argument("--caps-max-nodes", type=int, default=0, help="max nodes before stopping (0 = unlimited)")
+    # Optional heuristic toggles
+    ap.add_argument("--mrv-pieces", action="store_true", help="enable MRV-based piece ordering")
+    ap.add_argument("--support-bias", action="store_true", help="enable support-biased placement ordering")
     # NEW: inventory inputs
     ap.add_argument("--inventory", help="path to inventory JSON (with {\"pieces\":{...}})")
     ap.add_argument("--pieces", help="inline pieces, e.g. A=1,B=2 (takes precedence over --inventory)")
@@ -92,13 +97,16 @@ def main():
     pieces = {}  # (your piece library wiring comes later)
 
     engine = get_engine(args.engine)
-    meta = {"engine": engine.name, "seed": args.seed, "flags": {}}
+    meta = {"engine": engine.name, "seed": args.seed,
+            "flags": {"mrvPieces": bool(args.mrv_pieces), "supportBias": bool(args.support_bias)}}
+    # Build options bundle
+    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes)}, "max_results": int(args.max_results)}
 
     emitted_solution = False
 
     with open_eventlog(args.eventlog) as fp:
+        import time
         t0 = time.time()
-        options = {"seed": args.seed, "max_results": args.max_results, "flags": {}}
         for ev in engine.solve(container, inventory, pieces, options):
             ev.setdefault("t_ms", int((time.time()-t0)*1000))
             write_event(ev, fp)
@@ -112,16 +120,14 @@ def main():
 
         # If the engine emitted no 'solution' event, write a stub to avoid missing file
         if not emitted_solution:
-            # minimal "no-solution" payload
-            stub = {
-                "containerCidSha256": container.get("cid_sha256", "unknown"),
-                "lattice": "fcc",
-                "piecesUsed": pieces_used,
-                "placements": [],
-                "sid_state_sha256": "no_solution",
-                "sid_route_sha256": "no_solution",
-                "sid_state_canon_sha256": "no_solution",
-            }
+            from src.io.solution_sig import canonical_state_signature
+            from src.solver.symbreak import container_symmetry_group
+            cells = sorted(tuple(map(int,c)) for c in container["coordinates"])
+            symGroup = container_symmetry_group(cells)
+            stub = {"containerCidSha256": container["cid_sha256"], "lattice":"fcc",
+                    "piecesUsed": pieces_used, "placements": [],
+                    "sid_state_sha256":"no_solution","sid_route_sha256":"no_solution",
+                    "sid_state_canon_sha256": canonical_state_signature(set(), symGroup)}
             write_solution(args.solution, stub, meta, pieces_used)
 
 if __name__ == "__main__":

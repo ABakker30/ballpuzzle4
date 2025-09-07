@@ -1,1 +1,2 @@
-{"v": 1, "t_ms": 5, "type": "done", "metrics": {"solutions": 0, "nodes": 0, "pruned": 0, "bestDepth": 0, "smallMode": true, "symGroup": 1, "seed": 123}}
+{"v": 1, "t_ms": 6, "type": "solution", "solution": {"containerCidSha256": "1d4b19d57a001f79df7bd40d49759fcddc3f39d4ab2c178dce17e2ae0b4ba8e0", "lattice": "fcc", "piecesUsed": {"A": 0}, "placements": [{"piece": "A", "ori": 8, "t": [1, 1, 0]}], "sid_state_sha256": "dfs_state", "sid_route_sha256": "dfs_route", "sid_state_canon_sha256": "4febca0c912794e4feaf0195a597af48612221f8dcc0c75b31af533b62708d45"}}
+{"v": 1, "t_ms": 6, "type": "done", "metrics": {"solutions": 1, "nodes": 1, "pruned": 0, "bestDepth": 1, "smallMode": true, "symGroup": 1, "seed": 123, "maxNodes": 0}}
