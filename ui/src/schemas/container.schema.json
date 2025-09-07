@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ballpuzzle.example.com/schemas/container.schema.json",
+  "title": "Container Schema",
+  "description": "Schema for ball puzzle container definitions",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable name of the container"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description of the container"
+    },
+    "lattice_type": {
+      "type": "string",
+      "enum": ["fcc"],
+      "description": "Type of lattice coordinate system"
+    },
+    "coordinates": {
+      "type": "array",
+      "description": "Array of coordinate triplets defining the container shape",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        },
+        "minItems": 3,
+        "maxItems": 3
+      },
+      "minItems": 1
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional metadata about the container",
+      "properties": {
+        "volume": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of unit cells in the container"
+        },
+        "bounding_box": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {"type": "integer"},
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "max": {
+              "type": "array",
+              "items": {"type": "integer"},
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": ["min", "max"]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "created_by": {
+          "type": "string",
+          "description": "Creator identifier"
+        }
+      }
+    }
+  },
+  "required": ["name", "lattice_type", "coordinates"],
+  "additionalProperties": false
+}

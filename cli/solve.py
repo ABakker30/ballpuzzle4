@@ -68,7 +68,7 @@ def _resolve_inventory(args) -> dict[str,int]:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("container", help="path to FCC container json")
-    ap.add_argument("--engine", default="current", choices=["current","dfs","dlx","legacy","engine-c"])
+    ap.add_argument("--engine", default="current", choices=["current","dfs","dlx","engine-c"])
     ap.add_argument("--eventlog", default="events.jsonl")
     ap.add_argument("--solution", default="solution.json")
     ap.add_argument("--seed", type=int, default=9000)

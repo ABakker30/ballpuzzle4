@@ -1,0 +1,29 @@
+.app {
+  padding: 16px; 
+}
+header { display:flex; align-items:center; gap: 24px; }
+h1 { margin: 0 0 8px 0; font-size: 20px; }
+.tabs { display:flex; gap:8px; }
+.tab { padding: 8px 12px; border:1px solid #ddd; background:#fff; cursor:pointer; border-radius:6px; }
+.tab.active { background:#0b5; color:#fff; border-color:#0a4; }
+.grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-top:16px; }
+.card { border:1px solid #eee; border-radius:8px; padding:16px; background:#fafafa; }
+.drop { border:2px dashed #ccc; padding:12px; border-radius:8px; text-align:center; background:#fff; }
+.badge { margin-top:8px; display:inline-block; padding:4px 8px; border-radius:12px; background:#eee; font-size:12px; }
+.badge.ok { background:#e7f8eb; color:#0a5; border:1px solid #cbf0d0; }
+.badge.err { background:#fde7e7; color:#c30; border:1px solid #f6caca; }
+.placeholder { padding:16px; border:1px dashed #ddd; border-radius:8px; background:#fff; }
+
+/* Placement list styles */
+.row { 
+  padding: 6px 8px; 
+  border-radius: 6px; 
+  cursor: pointer; 
+}
+.row:hover { 
+  background: #f2f2f2; 
+}
+.row.active { 
+  background: #e7f8eb; 
+  border: 1px solid #cbf0d0; 
+}
