@@ -8,6 +8,7 @@ from ...solver.heuristics import tie_shuffle
 import random
 from ..engine_api import EngineProtocol
 from .coordinate_mapper import CoordinateMapper
+from .bitmap_state import BitmapState
 
 I3 = Tuple[int, int, int]
 
@@ -281,49 +282,30 @@ class DLXEngine(EngineProtocol):
                 # print("DLX DEBUG: No candidates for this combination, trying next")
                 continue
             
-            # Algorithm X setup for this combination
-            columns: List[int] = cell_col_ids
-            col_rows: Dict[int, Set[int]] = {col: set() for col in columns}
+            # Algorithm X setup with bitmap optimization
+            num_columns = len(cell_col_ids)
+            num_rows = len(rows_cols)
+            
+            # Create bitmap state for efficient operations
+            bitmap_state = BitmapState(num_columns, num_rows)
+            
+            # Map row IDs to sequential indices for bitmap
+            row_id_to_index = {rid: idx for idx, rid in enumerate(rows_cols.keys())}
+            index_to_row_id = {idx: rid for rid, idx in row_id_to_index.items()}
+            
+            # Set up row-column relationships in bitmap
             for rid, colset in rows_cols.items():
-                for col in colset:
-                    col_rows[col].add(rid)
+                row_idx = row_id_to_index[rid]
+                col_indices = [cid for cid in colset if cid < num_columns]
+                bitmap_state.set_row_columns(row_idx, col_indices)
             
-            row_ids = list(rows_cols.keys())
-            row_ids = tie_shuffle(row_ids, seed)
-            
-            def choose_col(active_cols: Set[int]) -> Optional[int]:
-                best, best_len = None, float('inf')
-                for col in active_cols:
-                    ln = len(col_rows[col] & active_rows)
-                    if ln < best_len:
-                        best_len = ln
-                        best = col
-                        if best_len <= 1:
-                            break
-                return best
-            
-            # Algorithm X search state
-            active_cols: Set[int] = set(columns)
-            active_rows: Set[int] = set(rows_cols.keys())
             solution_rows: List[int] = []
             piece_usage: Dict[str, int] = {pid: 0 for pid in target_pieces}
             
-            def cover(col: int, removed_cols: List[int], removed_rows: List[int]):
-                if col not in active_cols:
-                    return
-                active_cols.remove(col)
-                removed_cols.append(col)
-                for r in list(col_rows[col] & active_rows):
-                    active_rows.remove(r)
-                    removed_rows.append(r)
+            # Bitmap-based cover/uncover operations
+            cover_stack: List[Tuple[int, int]] = []  # Stack of (removed_cols, removed_rows) bitmaps
             
-            def uncover(removed_cols: List[int], removed_rows: List[int]):
-                while removed_rows:
-                    active_rows.add(removed_rows.pop())
-                while removed_cols:
-                    active_cols.add(removed_cols.pop())
-            
-            # Core Algorithm X search
+            # Core Algorithm X search with bitmap optimization
             def search() -> Iterator[List[int]]:
                 nonlocal results
                 
@@ -331,39 +313,47 @@ class DLXEngine(EngineProtocol):
                 if time_limit_seconds and (time.time() - start_time) >= time_limit_seconds:
                     raise StopIteration("Time limit reached")
                 
-                if len(active_cols) == 0:
+                if bitmap_state.is_solved():
                     # print(f"DLX DEBUG: Found solution with {len(solution_rows)} pieces")
                     yield list(solution_rows)
                     return  # Continue searching for more solutions
                 
-                col = choose_col(active_cols)
-                if col is None or len(col_rows[col] & active_rows) == 0:
+                # Check for empty columns (unsolvable state)
+                if bitmap_state.has_empty_column():
                     return
                 
-                cands = list(col_rows[col] & active_rows)
-                cands = tie_shuffle(cands, rnd.randint(0, 2**31-1))
+                # Choose column with minimum candidates (MRV heuristic)
+                col, candidate_count = bitmap_state.choose_best_column()
+                if col == -1 or candidate_count == 0:
+                    return
                 
-                for row in cands:
-                    piece_id = rows_meta[row]["piece"]
+                # Get candidates for this column
+                candidate_indices = bitmap_state.get_column_candidates(col)
+                candidate_row_ids = [index_to_row_id[idx] for idx in candidate_indices]
+                candidate_row_ids = tie_shuffle(candidate_row_ids, rnd.randint(0, 2**31-1))
+                
+                for row_id in candidate_row_ids:
+                    piece_id = rows_meta[row_id]["piece"]
                     if piece_usage[piece_id] >= target_inventory.get(piece_id, 0):
                         continue
                     
-                    solution_rows.append(row)
+                    solution_rows.append(row_id)
                     piece_usage[piece_id] += 1
-                    removed_cols, removed_rows = [], []
                     
-                    for c in rows_cols[row]:
-                        cover(c, removed_cols, removed_rows)
+                    # Cover the row using bitmap operations
+                    row_idx = row_id_to_index[row_id]
+                    removed_cols, removed_rows = bitmap_state.cover_row(row_idx)
+                    cover_stack.append((removed_cols, removed_rows))
                     
                     for sol in search():
                         if isinstance(sol, dict) and sol.get("type") == "tick":
                             yield sol
                         else:
                             yield sol
-                            results += 1
-                            # Don't return here - continue searching for more solutions
                     
-                    uncover(removed_cols, removed_rows)
+                    # Uncover using bitmap operations
+                    removed_cols, removed_rows = cover_stack.pop()
+                    bitmap_state.uncover(removed_cols, removed_rows)
                     piece_usage[piece_id] -= 1
                     solution_rows.pop()
             
@@ -371,7 +361,7 @@ class DLXEngine(EngineProtocol):
             canonical_sigs = set()
             combination_found_solution = False
             
-            # print(f"DLX DEBUG: Starting Algorithm X search with {len(columns)} columns, {len(row_ids)} rows")
+            # print(f"DLX DEBUG: Starting Algorithm X search with {num_columns} columns, {num_rows} rows")
             
             for sol_rows in search():
                 if isinstance(sol_rows, dict) and sol_rows.get("type") == "tick":
