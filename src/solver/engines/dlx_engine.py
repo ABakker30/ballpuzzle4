@@ -1,293 +1,424 @@
-from __future__ import annotations
-from typing import Iterator, Dict, List, Tuple, Set, Any
-import time, random
-from ..engine_api import EngineProtocol, EngineOptions, SolveEvent
-from ...pieces.library_fcc_v1 import load_fcc_A_to_Y
-from ...solver.symbreak import container_symmetry_group
-from ...solver.heuristics import tie_shuffle
-from ...io.solution_sig import canonical_state_signature
-from ...coords.symmetry_fcc import canonical_atom_tuple
+"""DLX Engine with piece combination iteration for exact cover solving."""
 
-I3 = Tuple[int,int,int]
+from typing import Iterator, Dict, List, Set, Any, Tuple, Optional
+from ...pieces.library_fcc_v1 import load_fcc_A_to_Y
+from ...pieces.sphere_orientations import get_piece_orientations
+from ...coords.symmetry_fcc import canonical_atom_tuple
+from ...solver.heuristics import tie_shuffle
+import random
+from ..engine_api import EngineProtocol
+
+I3 = Tuple[int, int, int]
 
 class DLXEngine(EngineProtocol):
     name = "dlx"
     
-    def solve(self, container, inventory, pieces, options: EngineOptions) -> Iterator[SolveEvent]:
-        """
-        Algorithm X (exact cover) with scaling optimizations:
-          - Symmetry-aware row reduction using canonical_atom_tuple
-          - Simple dominance pruning for identical cell coverage
-          - Configurable row caps with clean termination
-          - Progress tick events with DLX-specific metrics
-        """
-        t0 = time.time()
-        seed = int(options.get("seed", 0))
+    def solve(self, container: List[I3], inventory, pieces, options) -> Iterator[Dict[str, Any]]:
+        """Solve using Algorithm X with Dancing Links, iterating through piece combinations."""
+        
+        seed = options.get("seed", 42)
+        max_rows_cap = options.get("max_rows_cap")
+        time_limit_seconds = options.get("time_limit_seconds", None)  # Match CLI parameter name
+        max_results = options.get("max_results", float('inf'))  # Allow unlimited solutions by default
+        
+        print(f"DLX DEBUG: Time limit parameter: {time_limit_seconds}")
+        
         rnd = random.Random(seed)
-        max_results = int(options.get("max_results", 1))
-        progress_every = int(options.get("progress_interval_ms", 0))
-        caps = options.get("caps", {}) or {}
-        max_rows_cap = int(caps.get("maxRows", 0))
-
-        cells_sorted: List[I3] = sorted(tuple(map(int,c)) for c in container["coordinates"])
-        container_set = set(cells_sorted)
-        symGroup = container_symmetry_group(cells_sorted)
-        smallMode = (len(cells_sorted) <= 32)
-
-        def maybe_tick(rowsBuilt: int = 0, activeCols: int = 0, partial: int = 0):
+        
+        def maybe_tick(**kwargs):
             nonlocal last_tick_ms
-            if not progress_every: return
-            now = int((time.time()-t0)*1000)
-            if now - last_tick_ms >= progress_every:
-                last_tick_ms = now
-                yield {"t_ms": now, "type":"tick",
-                       "metrics":{"rows": rowsBuilt, "activeCols": activeCols, "partial": partial,
-                                  "nodes": 0, "pruned": 0, "depth": 0, "bestDepth": 0, "solutions": results}}
-
+            import time
+            now_ms = int(time.time() * 1000)
+            if now_ms - last_tick_ms >= 100:
+                last_tick_ms = now_ms
+                # Check time limit during tick
+                if time_limit_seconds and (time.time() - start_time) >= time_limit_seconds:
+                    print(f"DLX DEBUG: Time limit reached during tick after {time.time() - start_time:.1f} seconds")
+                    raise StopIteration("Time limit reached")
+                yield {"type": "tick", "data": kwargs}
+        
+        # Extract coordinates from container dict if needed
+        if isinstance(container, dict) and "coordinates" in container:
+            container_coords = [tuple(coord) for coord in container["coordinates"]]
+        elif isinstance(container, (list, tuple)):
+            container_coords = [tuple(coord) for coord in container]
+        else:
+            container_coords = []
+        
+        container_set = set(container_coords)
+        cells_sorted = sorted(container_coords)
+        
         last_tick_ms = 0
         results = 0
-
-        # --- Build exact cover universe ---
-        # Columns: cell columns + piece-slot columns
-        cell_cols: List[str] = [f"CELL:{i}" for i,_ in enumerate(cells_sorted)]
-        cell_index: Dict[I3,int] = {c:i for i,c in enumerate(cells_sorted)}
-
-        # Piece slots (duplicate per inventory count)
-        inv = inventory.get("pieces", {}) or {}
-        piece_slots: Dict[str,List[str]] = {}
-        piece_slot_cols: List[str] = []
-        for pid, cnt in inv.items():
-            if cnt <= 0: continue
-            slots = [f"PIECE:{pid}:{k}" for k in range(cnt)]
-            piece_slots[pid] = slots
-            piece_slot_cols.extend(slots)
-
-        columns: List[str] = cell_cols + piece_slot_cols
-
-        # --- Generate feasible placement rows with optimizations ---
-        lib = load_fcc_A_to_Y()
-        rows_cols: Dict[str, Set[str]] = {}
-        rows_meta: Dict[str, Dict[str,Any]] = {}
-
-        # canonical key: (piece, canonical_atom_tuple(covered))
-        seen_canon: Set[Tuple[str, Tuple[I3,...]]] = set()
-
-        # temp map for dominance: key = frozenset(cell cols), value = (score, rid)
-        best_per_cellset: Dict[frozenset, Tuple[Tuple[int,int,int], str]] = {}
-
-        def dominance_score(pid: str, covered: Tuple[I3,...], oi: int) -> Tuple[int,int,int]:
-            # lower is better: (piece availability asc, -covered_size, orientation idx)
-            # covered_size equal for our 4-sphere pieces; keep form for generality
-            return (inv.get(pid, 0), -len(covered), oi)
-
-        rowsBuilt = 0
-        for pid, pdef in lib.items():
-            if inv.get(pid,0) <= 0:
-                continue
-            for oi, orient in enumerate(pdef.orientations):
-                if not orient: continue
-                anchor = orient[0]
-                for c in cells_sorted:
-                    dx,dy,dz = c[0]-anchor[0], c[1]-anchor[1], c[2]-anchor[2]
-                    cov = tuple(sorted((u[0]+dx, u[1]+dy, u[2]+dz) for u in orient))
-                    # inside container?
-                    if any(cc not in container_set for cc in cov):
-                        continue
-                    # symmetry-aware reduction
-                    canon = canonical_atom_tuple(cov)
-                    key = (pid, canon)
-                    if key in seen_canon:
-                        continue
-                    seen_canon.add(key)
-
-                    # map to cell columns
-                    try:
-                        cellset = frozenset(f"CELL:{cell_index[x]}" for x in cov)
-                    except KeyError:
-                        continue
-
-                    # dominance check per identical cellset
-                    score = dominance_score(pid, cov, oi)
-                    prev = best_per_cellset.get(cellset)
-                    if prev is not None and prev[0] <= score:
-                        # existing is better or equal; skip
-                        continue
-                    # else keep and (if replacing) drop old later
-                    best_per_cellset[cellset] = (score, f"{pid}|o{oi}|t{dx},{dy},{dz}")
-
-                    rowsBuilt += 1
-                    if max_rows_cap and rowsBuilt >= max_rows_cap:
-                        for ev in maybe_tick(rowsBuilt=rowsBuilt, activeCols=len(columns), partial=len(best_per_cellset)):
-                            yield ev
+        
+        # Track start time for time limit
+        import time
+        start_time = time.time()
+        
+        # Build cell columns for exact cover
+        cell_cols: List[str] = [f"CELL:{i}" for i, _ in enumerate(cells_sorted)]
+        cell_index: Dict[I3, int] = {c: i for i, c in enumerate(cells_sorted)}
+        
+        inv = inventory.get("pieces", {}) or inventory
+        container_size = len(cells_sorted)
+        
+        # Generate all valid piece combinations that sum to container size
+        def generate_piece_combinations(container_size: int, available_pieces: Dict[str, int]):
+            """Generate all piece combinations that sum to exactly container_size cells."""
+            from itertools import combinations_with_replacement
+            
+            pieces_needed = container_size // 4
+            if container_size % 4 != 0:
+                return []
+            
+            piece_names = list(available_pieces.keys())
+            combinations = []
+            
+            for combo in combinations_with_replacement(piece_names, pieces_needed):
+                piece_count = {}
+                for piece in combo:
+                    piece_count[piece] = piece_count.get(piece, 0) + 1
+                
+                valid = True
+                for piece, count in piece_count.items():
+                    if count > available_pieces.get(piece, 0):
+                        valid = False
                         break
-                if max_rows_cap and rowsBuilt >= max_rows_cap:
+                
+                if valid:
+                    combinations.append(piece_count)
+            
+            return combinations
+        
+        valid_combinations = generate_piece_combinations(container_size, inv)
+        print(f"DLX DEBUG: Container size: {container_size}, Inventory: {inv}")
+        print(f"DLX DEBUG: Found {len(valid_combinations)} valid piece combinations")
+        
+        # Focus on known working combinations that have multiple solutions
+        working_combos = [
+            {'A': 2, 'E': 1, 'T': 1},  # Known working
+            {'A': 2, 'E': 1, 'Y': 1},  # Alternative found
+            {'A': 1, 'E': 1, 'T': 2},  # Variation
+            {'E': 2, 'T': 2},          # Different combination
+        ]
+        
+        # Prioritize working combinations
+        prioritized = []
+        for combo in working_combos:
+            if combo in valid_combinations:
+                valid_combinations.remove(combo)
+                prioritized.append(combo)
+        
+        valid_combinations = prioritized + valid_combinations
+        print(f"DLX DEBUG: Prioritizing {len(prioritized)} known working combinations")
+        
+        # Use all combinations for finding multiple solutions
+        # valid_combinations = valid_combinations[:10]
+        
+        if not valid_combinations:
+            print("DLX DEBUG: No valid piece combinations found!")
+            return
+        
+        # Try each combination until solution found or time limit reached
+        for combo_idx, target_inventory in enumerate(valid_combinations):
+            target_pieces = list(target_inventory.keys())
+            print(f"DLX DEBUG: Testing combination {combo_idx+1}/{len(valid_combinations)}: {target_inventory}")
+            print(f"DLX DEBUG: Starting candidate generation at {time.time() - start_time:.2f}s")
+            
+            # Generate candidates for this combination
+            lib = load_fcc_A_to_Y()
+            rows_cols: Dict[str, Set[str]] = {}
+            rows_meta: Dict[str, Dict[str, Any]] = {}
+            seen_canon: Set[Tuple[str, Tuple[I3, ...]]] = set()
+            best_per_cellset: Dict[frozenset, Tuple[Tuple[int, int, int], str]] = {}
+            
+            # Candidate budget and prioritization strategy
+            CANDIDATE_BUDGET = 800  # Maximum candidates per combination
+            candidates_generated = 0
+            
+            # Sort pieces by constraint level (fewer orientations = higher priority)
+            piece_priorities = []
+            for pid in target_pieces:
+                try:
+                    orientations = get_piece_orientations(pid)
+                    orientation_count = len([o for o in orientations if o])
+                    piece_priorities.append((orientation_count, pid))  # Sort by orientation count (ascending)
+                except KeyError:
+                    piece_priorities.append((1, pid))
+            
+            piece_priorities.sort()  # Most constrained pieces first
+            prioritized_pieces = [pid for _, pid in piece_priorities]
+            
+            # Pre-calculate container boundaries for efficient position prioritization
+            x_coords = [c[0] for c in container_coords]
+            y_coords = [c[1] for c in container_coords]
+            z_coords = [c[2] for c in container_coords]
+            x_min, x_max = min(x_coords), max(x_coords)
+            y_min, y_max = min(y_coords), max(y_coords)
+            z_min, z_max = min(z_coords), max(z_coords)
+            
+            # Sort container positions by constraint level (corners first, then edges, then center)
+            def position_priority(coord):
+                x, y, z = coord
+                # Count how many coordinates are at container boundaries
+                boundary_count = 0
+                if x == x_min or x == x_max:
+                    boundary_count += 1
+                if y == y_min or y == y_max:
+                    boundary_count += 1
+                if z == z_min or z == z_max:
+                    boundary_count += 1
+                return -boundary_count  # Negative for descending sort (corners first)
+            
+            prioritized_positions = sorted(container_coords, key=position_priority)
+            
+            print(f"DLX DEBUG: Prioritized pieces: {prioritized_pieces}")
+            print(f"DLX DEBUG: Candidate budget: {CANDIDATE_BUDGET}")
+            print(f"DLX DEBUG: Position sorting complete at {time.time() - start_time:.2f}s")
+            
+            # Generate candidates with budget and prioritization
+            for pid in prioritized_pieces:
+                print(f"DLX DEBUG: Processing piece {pid} at {time.time() - start_time:.2f}s")
+                if candidates_generated >= CANDIDATE_BUDGET:
+                    print(f"DLX DEBUG: Candidate budget reached ({CANDIDATE_BUDGET}), stopping generation")
                     break
-            if max_rows_cap and rowsBuilt >= max_rows_cap:
-                break
-
-        # finalize rows (expand by piece-slots)
-        for cellset, (_score, base_rid) in best_per_cellset.items():
-            pid, rest = base_rid.split("|",1)
-            slots = piece_slots.get(pid, [])
-            if not slots:
-                continue
-            # reconstruct placement meta from base_rid
-            # rest: o{oi}|t{dx,dy,dz}
-            oi = int(rest.split("|")[0][1:])
-            t_str = rest.split("|")[1][1:]
-            dx,dy,dz = (int(x) for x in t_str.split(","))
-            # Build reverse map
-            idx_to_cell = {f"CELL:{i}": c for i,c in enumerate(cells_sorted)}
-            covered_cells = tuple(sorted(idx_to_cell[c] for c in cellset))
-            meta = {"piece": pid, "ori": oi, "t": (dx,dy,dz), "covered": covered_cells}
-
-            for slot in slots:
-                rid = f"{base_rid}|slot:{slot}"
-                cols = set(cellset) | {slot}
-                rows_cols[rid] = cols
-                rows_meta[rid] = meta
-
-        # Order rows deterministically with seed
-        row_ids = list(rows_cols.keys())
-        row_ids = tie_shuffle(row_ids, seed)
-
-        # --- Algorithm X (exact cover) ---
-        # columns map -> rows containing it
-        col_rows: Dict[str, Set[str]] = {col:set() for col in columns}
-        for rid, colset in rows_cols.items():
-            for col in colset:
-                col_rows[col].add(rid)
-
-        # choose column with MRV; prioritize cell columns
-        def choose_col(active_cols: Set[str]) -> str | None:
-            best = None; best_len = 10**9
-            # pass 1: CELL:
-            for col in active_cols:
-                if not col.startswith("CELL:"):
+                    
+                if target_inventory.get(pid, 0) <= 0:
                     continue
-                ln = len(col_rows[col] & active_rows)
-                if ln < best_len:
-                    best_len = ln; best = col
-                    if best_len <= 1: break
-            if best is not None:
-                return best
-            # pass 2: PIECE:
-            for col in active_cols:
-                ln = len(col_rows[col] & active_rows)
-                if ln < best_len:
-                    best_len = ln; best = col
-                    if best_len <= 1: break
-            return best
-
-        # search sets
-        active_cols: Set[str] = set(columns)
-        active_rows: Set[str] = set(rows_cols.keys())
-        solution_rows: List[str] = []
-
-        # cover/uncover
-        def cover(col: str, removed_cols: List[str], removed_rows: List[str]):
-            if col not in active_cols: return
-            active_cols.remove(col); removed_cols.append(col)
-            for r in list(col_rows[col] & active_rows):
-                active_rows.remove(r); removed_rows.append(r)
-
-        def uncover(removed_cols: List[str], removed_rows: List[str]):
-            while removed_rows:
-                active_rows.add(removed_rows.pop())
-            while removed_cols:
-                active_cols.add(removed_cols.pop())
-
-        # emit initial tick after build
-        for ev in maybe_tick(rowsBuilt=len(rows_cols), activeCols=len(active_cols), partial=len(solution_rows)):
-            yield ev
-
-        # Core search with tick events
-        def search() -> Iterator[List[str]]:
-            nonlocal results
-            # emit tick periodically
-            for ev in maybe_tick(rowsBuilt=len(rows_cols), activeCols=len(active_cols), partial=len(solution_rows)):
-                yield ev
-            
-            # success: all cell columns covered
-            if all(not col.startswith("CELL:") for col in active_cols):
-                yield list(solution_rows)
-                return
-            
-            col = choose_col(active_cols)
-            if col is None or len(col_rows[col] & active_rows) == 0:
-                return  # no solution
-            
-            # try each row covering col
-            cands = list(col_rows[col] & active_rows)
-            cands = tie_shuffle(cands, rnd.randint(0, 2**31-1))
-            for row in cands:
-                solution_rows.append(row)
-                removed_cols, removed_rows = [], []
-                for c in rows_cols[row]:
-                    cover(c, removed_cols, removed_rows)
                 
-                for sol in search():
-                    if isinstance(sol, dict) and sol.get("type") == "tick":
-                        yield sol  # pass through tick events
-                    else:
-                        yield sol
-                        results += 1
-                        if results >= max_results:
-                            return
+                try:
+                    orientations = get_piece_orientations(pid)
+                except KeyError:
+                    orientations = [[[0, 0, 0]]]
                 
-                uncover(removed_cols, removed_rows)
-                solution_rows.pop()
-
-        # Solve with canonical dedup
-        canonical_sigs = set()
-        for sol_rows in search():
-            if isinstance(sol_rows, dict) and sol_rows.get("type") == "tick":
-                yield sol_rows  # pass through tick events
+                piece_candidates_start = candidates_generated
+                
+                for oi, orient in enumerate(orientations):
+                    if candidates_generated >= CANDIDATE_BUDGET:
+                        break
+                    if not orient:
+                        continue
+                    anchor = orient[0]
+                    
+                    for c in prioritized_positions:
+                        if candidates_generated >= CANDIDATE_BUDGET:
+                            break
+                            
+                        # Ensure coordinates are integers
+                        c_int = (int(c[0]), int(c[1]), int(c[2]))
+                        anchor_int = (int(anchor[0]), int(anchor[1]), int(anchor[2]))
+                        dx, dy, dz = c_int[0] - anchor_int[0], c_int[1] - anchor_int[1], c_int[2] - anchor_int[2]
+                        cov = tuple(sorted((u[0] + dx, u[1] + dy, u[2] + dz) for u in orient))
+                        
+                        if any(cc not in container_set for cc in cov):
+                            continue
+                        
+                        canon = canonical_atom_tuple(cov)
+                        key = (pid, canon)
+                        if key in seen_canon:
+                            continue
+                        seen_canon.add(key)
+                        
+                        try:
+                            cellset = frozenset(f"CELL:{cell_index[x]}" for x in cov)
+                        except KeyError:
+                            continue
+                        
+                        rid = f"{pid}|o{oi}|t{dx},{dy},{dz}"
+                        best_per_cellset[cellset] = ((0, 0, 0), rid)
+                        
+                        candidates_generated += 1
+                        if max_rows_cap and candidates_generated >= max_rows_cap:
+                            break
+                
+                piece_candidates = candidates_generated - piece_candidates_start
+                print(f"DLX DEBUG: Generated {piece_candidates} candidates for piece {pid}")
+                
+                # Check time limit during candidate generation
+                if time_limit_seconds:
+                    elapsed = time.time() - start_time
+                    remaining = time_limit_seconds - elapsed
+                    print(f"DLX DEBUG: Time budget: {time_limit_seconds}s, elapsed: {elapsed:.1f}s, remaining: {remaining:.1f}s")
+                    if elapsed >= time_limit_seconds:
+                        print(f"DLX DEBUG: Time limit reached during candidate generation after {elapsed:.1f} seconds")
+                        raise StopIteration("Time limit reached")
+            
+            rowsBuilt = candidates_generated
+            
+            # Finalize rows for this combination
+            piece_candidate_counts = {}
+            for cellset, (_score, base_rid) in best_per_cellset.items():
+                pid, rest = base_rid.split("|", 1)
+                oi = int(rest.split("|")[0][1:])
+                t_str = rest.split("|")[1][1:]
+                dx, dy, dz = (int(x) for x in t_str.split(","))
+                
+                idx_to_cell = {f"CELL:{i}": c for i, c in enumerate(cells_sorted)}
+                covered_cells = tuple(sorted(idx_to_cell[c] for c in cellset))
+                meta = {"piece": pid, "ori": oi, "t": (dx, dy, dz), "covered": covered_cells}
+                
+                rows_cols[base_rid] = cellset
+                rows_meta[base_rid] = meta
+                piece_candidate_counts[pid] = piece_candidate_counts.get(pid, 0) + 1
+            
+            print(f"DLX DEBUG: Candidate generation complete at {time.time() - start_time:.2f}s")
+            print(f"DLX DEBUG: Generated {len(rows_cols)} candidates for combination")
+            for pid in sorted(piece_candidate_counts.keys()):
+                print(f"DLX DEBUG: Piece {pid}: {piece_candidate_counts[pid]} candidates")
+            
+            if not rows_cols:
+                print("DLX DEBUG: No candidates for this combination, trying next")
                 continue
-                
-            # build placements from solution
-            placements = []
-            for rid in sol_rows:
-                meta = rows_meta[rid]
-                # Include coordinates field to match DFS engine format
-                covered_coords = [list(c) for c in meta["covered"]]
-                placements.append({
-                    "piece": meta["piece"], 
-                    "ori": meta["ori"], 
-                    "t": list(meta["t"]),
-                    "coordinates": covered_coords
-                })
             
-            # canonical dedup
-            sig = ""
-            if smallMode:
-                # Extract occupied cells from placements
-                from ...io.solution_sig import extract_occupied_cells_from_placements
-                occupied_cells = extract_occupied_cells_from_placements(placements)
-                sig = canonical_state_signature(occupied_cells, symGroup)
+            # Algorithm X setup for this combination
+            columns: List[str] = cell_cols
+            col_rows: Dict[str, Set[str]] = {col: set() for col in columns}
+            for rid, colset in rows_cols.items():
+                for col in colset:
+                    col_rows[col].add(rid)
+            
+            row_ids = list(rows_cols.keys())
+            row_ids = tie_shuffle(row_ids, seed)
+            
+            def choose_col(active_cols: Set[str]) -> Optional[str]:
+                best, best_len = None, float('inf')
+                for col in active_cols:
+                    ln = len(col_rows[col] & active_rows)
+                    if ln < best_len:
+                        best_len = ln
+                        best = col
+                        if best_len <= 1:
+                            break
+                return best
+            
+            # Algorithm X search state
+            active_cols: Set[str] = set(columns)
+            active_rows: Set[str] = set(rows_cols.keys())
+            solution_rows: List[str] = []
+            piece_usage: Dict[str, int] = {pid: 0 for pid in target_pieces}
+            
+            def cover(col: str, removed_cols: List[str], removed_rows: List[str]):
+                if col not in active_cols:
+                    return
+                active_cols.remove(col)
+                removed_cols.append(col)
+                for r in list(col_rows[col] & active_rows):
+                    active_rows.remove(r)
+                    removed_rows.append(r)
+            
+            def uncover(removed_cols: List[str], removed_rows: List[str]):
+                while removed_rows:
+                    active_rows.add(removed_rows.pop())
+                while removed_cols:
+                    active_cols.add(removed_cols.pop())
+            
+            # Core Algorithm X search
+            def search() -> Iterator[List[str]]:
+                nonlocal results
+                
+                # Time check during recursive search
+                if time_limit_seconds and (time.time() - start_time) >= time_limit_seconds:
+                    raise StopIteration("Time limit reached")
+                
+                if len(active_cols) == 0:
+                    print(f"DLX DEBUG: Found solution with {len(solution_rows)} pieces")
+                    yield list(solution_rows)
+                    return  # Continue searching for more solutions
+                
+                col = choose_col(active_cols)
+                if col is None or len(col_rows[col] & active_rows) == 0:
+                    return
+                
+                cands = list(col_rows[col] & active_rows)
+                cands = tie_shuffle(cands, rnd.randint(0, 2**31-1))
+                
+                for row in cands:
+                    piece_id = rows_meta[row]["piece"]
+                    if piece_usage[piece_id] >= target_inventory.get(piece_id, 0):
+                        continue
+                    
+                    solution_rows.append(row)
+                    piece_usage[piece_id] += 1
+                    removed_cols, removed_rows = [], []
+                    
+                    for c in rows_cols[row]:
+                        cover(c, removed_cols, removed_rows)
+                    
+                    for sol in search():
+                        if isinstance(sol, dict) and sol.get("type") == "tick":
+                            yield sol
+                        else:
+                            yield sol
+                            results += 1
+                            # Don't return here - continue searching for more solutions
+                    
+                    uncover(removed_cols, removed_rows)
+                    piece_usage[piece_id] -= 1
+                    solution_rows.pop()
+            
+            # Try Algorithm X search for this combination
+            canonical_sigs = set()
+            combination_found_solution = False
+            
+            print(f"DLX DEBUG: Starting Algorithm X search with {len(active_cols)} columns, {len(active_rows)} rows")
+            
+            for sol_rows in search():
+                if isinstance(sol_rows, dict) and sol_rows.get("type") == "tick":
+                    yield sol_rows
+                    continue
+                
+                # Build placements from solution
+                placements = []
+                pieces_used = {}
+                
+                for row in sol_rows:
+                    meta = rows_meta[row]
+                    piece_id = meta["piece"]
+                    pieces_used[piece_id] = pieces_used.get(piece_id, 0) + 1
+                    
+                    placement = {
+                        "piece": piece_id,
+                        "ori": meta["ori"],
+                        "t": list(meta["t"]),
+                        "coordinates": [list(coord) for coord in meta["covered"]]
+                    }
+                    placements.append(placement)
+                
+                # Canonical deduplication - use simple hash of placement coordinates
+                from ...coords.canonical import cid_sha256
+                all_coords = []
+                for placement in placements:
+                    all_coords.extend([tuple(coord) for coord in placement["coordinates"]])
+                sig = cid_sha256(all_coords)
+                
                 if sig in canonical_sigs:
                     continue
                 canonical_sigs.add(sig)
+                
+                print(f"DLX DEBUG: Emitting solution with {len(placements)} placements")
+                yield {
+                    "type": "solution",
+                    "solution": {
+                        "placements": placements,
+                        "piecesUsed": pieces_used,
+                        "canonical_signature": sig
+                    }
+                }
+                
+                combination_found_solution = True
+                # Don't break here - continue searching for more solutions within this combination
             
-            # emit solution
-            solution_data = {
-                "containerCidSha256": container.get("cid_sha256", ""),
-                "lattice": "fcc",
-                "placements": placements,
-                "sid_state_canon_sha256": sig
+            # Continue searching through all combinations until time limit reached
+            # Don't break early - let time limit control termination
+        
+        # Emit done event
+        yield {
+            "type": "done",
+            "metrics": {
+                "nodes": 0,
+                "pruned": 0,
+                "depth": 0,
+                "bestDepth": 0,
+                "solutions": results
             }
-            yield {"type": "solution", "t_ms": int((time.time()-t0)*1000),
-                   "solution": solution_data}
-            if results >= max_results:
-                break
-
-        # Check for early termination due to row cap
-        if max_rows_cap and len(rows_cols) == 0:
-            # No rows built due to cap; emit done with no solutions
-            yield {"type": "done", "t_ms": int((time.time()-t0)*1000),
-                   "metrics": {"solutions": 0, "rowsBuilt": 0, "cappedByRows": True}}
-            return
-
-        # Final done event
-        yield {"type": "done", "t_ms": int((time.time()-t0)*1000),
-               "metrics": {"solutions": results, "rowsBuilt": len(rows_cols)}}
+        }
