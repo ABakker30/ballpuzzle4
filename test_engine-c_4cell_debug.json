@@ -1,0 +1,1 @@
+{"version":1,"placements":[{"piece":"D","ori":0,"t":[0,0,0],"coordinates":[[0,0,0],[1,0,0],[2,0,0],[3,0,0]]}],"piecesUsed":{"D":1},"mode":"solver","solver":{"engine":"engine-c","seed":42,"flags":{"mrvPieces":false,"supportBias":false}}}

@@ -42,8 +42,16 @@ def for_target(target: I3, occ, bag, lib: Dict[str, object], container_set: Set[
         if not pdef:
             continue
             
+        # Get static orientations from 4-sphere data
+        from ..pieces.sphere_orientations import get_piece_orientations
+        try:
+            orientations = get_piece_orientations(pid)
+        except KeyError:
+            # Fallback for pieces not in data
+            orientations = [[[0, 0, 0]]]
+        
         # Try each orientation of the piece
-        for oi, orient in enumerate(pdef.orientations):
+        for oi, orient in enumerate(orientations):
             # Try each atom as the anchor to land on target
             for atom in orient:
                 # Calculate translation to place this atom at target

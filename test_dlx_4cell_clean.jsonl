@@ -1,0 +1,2 @@
+{"v": 1, "type": "solution", "t_ms": 2, "solution": {"containerCidSha256": "f72e00cd36d20b7c843d9ea3c8b6f6f54a0621c9b8698e29fa1f90b9de96c7aa", "lattice": "fcc", "placements": [{"piece": "D", "ori": 0, "t": [0, 0, 0], "coordinates": [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]]}], "sid_state_canon_sha256": "25fec64c06350014a574483611bdec08922823cbd8761d2f62655a8c433de28e"}}
+{"v": 1, "type": "done", "t_ms": 7, "metrics": {"solutions": 1, "rowsBuilt": 1}}

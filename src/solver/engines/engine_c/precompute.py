@@ -4,41 +4,29 @@ from typing import List, Dict, Tuple, Set
 from .lattice_fcc import Int3, fcc_rotations, apply_rot
 from .bitset import bitset_from_indices, all_bits_mask
 
+try:
+    from ....pieces.sphere_orientations import get_piece_orientations
+except ImportError:
+    def get_piece_orientations(piece_id: str):
+        return [[[0, 0, 0]]]  # Fallback
 
-def dedupe_orientations(piece_cells: List[Int3]) -> List[List[Int3]]:
+
+def get_static_orientations(piece_id: str) -> List[List[Int3]]:
     """
-    Generate unique orientations by rotating piece and deduplicating.
+    Get static orientations for a piece from 4-sphere data.
     
     Args:
-        piece_cells: List of relative coordinates for piece
+        piece_id: Piece identifier (A-Y)
         
     Returns:
-        List of unique oriented piece shapes (relative coordinates)
+        List of pre-computed oriented piece shapes (relative coordinates)
     """
-    rotations = fcc_rotations()
-    unique_orientations = []
-    seen_shapes = set()
-    
-    for rotation in rotations:
-        # Apply rotation to piece
-        rotated = apply_rot(rotation, piece_cells)
-        
-        # Normalize to relative coordinates (translate to origin)
-        if rotated:
-            min_x = min(x for x, y, z in rotated)
-            min_y = min(y for x, y, z in rotated)
-            min_z = min(z for x, y, z in rotated)
-            
-            normalized = tuple(sorted([
-                (x - min_x, y - min_y, z - min_z) 
-                for x, y, z in rotated
-            ]))
-            
-            if normalized not in seen_shapes:
-                seen_shapes.add(normalized)
-                unique_orientations.append(list(normalized))
-    
-    return unique_orientations
+    try:
+        orientations = get_piece_orientations(piece_id)
+        return [[(x, y, z) for x, y, z in orientation] for orientation in orientations]
+    except KeyError:
+        # Fallback for pieces not in data
+        return [[(0, 0, 0)]]  # Single orientation at origin
 
 
 def build_placement_data(container_cells: List[Int3], 
@@ -78,8 +66,8 @@ def build_placement_data(container_cells: List[Int3],
     for piece_id, piece_cells in pieces_data.items():
         piece_cell_counts.append(len(piece_cells))
         
-        # Get unique orientations
-        orientations = dedupe_orientations(piece_cells)
+        # Get static orientations from legacy data
+        orientations = get_static_orientations(piece_id)
         
         # For each orientation
         for orient_idx, oriented_cells in enumerate(orientations):

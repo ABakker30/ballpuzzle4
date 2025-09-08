@@ -67,35 +67,80 @@ def dfs_solve(
     state = SearchState()
     remaining_inventory = inventory.copy()
     
-    def search_recursive(occ_bitset: int, depth: int) -> bool:
+    def search_recursive(occ_bitset: int, depth: int, solution_path: List[int] = None) -> bool:
         """Recursive DFS implementation."""
+        if solution_path is None:
+            solution_path = []
+        
         state.nodes_visited += 1
         state.depth = max(state.depth, depth)
         
         # Budget and cancellation checks every K nodes
-        if state.nodes_visited % 8192 == 0:
+        if state.nodes_visited % 1000 == 0:  # Check more frequently
             elapsed = time.time() - state.start_time
             
             # Time budget check
             if elapsed > time_budget_s:
                 return True  # Stop search
             
+            # Node limit check (safety for large inventories)
+            if state.nodes_visited > 50000:  # Hard limit to prevent lockups
+                return True  # Stop search
+            
             # Cancellation check
             if cancel_flag and cancel_flag():
                 return True  # Stop search
         
-        # Progress reporting
+        # Progress reporting - yield control to allow interruption
         if (state.nodes_visited - state.last_progress_nodes >= snapshot_every_nodes):
             elapsed = time.time() - state.start_time
-            on_progress(state.nodes_visited, depth, elapsed)
+            should_continue = on_progress(state.nodes_visited, depth, elapsed)
             state.last_progress_nodes = state.nodes_visited
+            
+            # Allow engine to be halted by returning False from progress callback
+            if should_continue is False:
+                return True  # Stop search
         
         # Check if solution found
         empty_bitset = all_mask ^ occ_bitset
         if empty_bitset == 0:
-            # Build solution from used candidates (need to track this)
-            # For now, create empty solution to test framework
+            # Build solution from used candidates
             solution_placements = []
+            for cand_idx in solution_path:
+                piece_id, orient_idx, anchor_idx = candidate_meta[cand_idx]
+                anchor_cell = cells_by_index[anchor_idx]
+                
+                # Get the oriented piece cells
+                from .precompute import get_static_orientations
+                orientations = get_static_orientations(piece_id)
+                if orient_idx < len(orientations):
+                    oriented_cells = orientations[orient_idx]
+                    if oriented_cells:
+                        # Calculate translation to place first cell at anchor
+                        ref_cell = oriented_cells[0]
+                        translation = (
+                            anchor_cell[0] - ref_cell[0],
+                            anchor_cell[1] - ref_cell[1],
+                            anchor_cell[2] - ref_cell[2]
+                        )
+                        
+                        # Apply translation to all cells
+                        final_coords = []
+                        for px, py, pz in oriented_cells:
+                            final_coords.append([
+                                px + translation[0],
+                                py + translation[1],
+                                pz + translation[2]
+                            ])
+                        
+                        placement = {
+                            "piece": piece_id,
+                            "ori": orient_idx,
+                            "t": list(anchor_cell),
+                            "coordinates": final_coords
+                        }
+                        solution_placements.append(placement)
+            
             on_solution(solution_placements)
             state.solutions_found += 1
             
@@ -160,8 +205,9 @@ def dfs_solve(
             # Update inventory
             remaining_inventory[piece_id] -= 1
             
-            # Recurse
-            should_stop = search_recursive(new_occ, depth + 1)
+            # Recurse with updated solution path
+            new_solution_path = solution_path + [cand_idx]
+            should_stop = search_recursive(new_occ, depth + 1, new_solution_path)
             
             # Restore inventory
             remaining_inventory[piece_id] += 1
@@ -172,7 +218,7 @@ def dfs_solve(
         return False
     
     # Start search
-    search_recursive(0, 0)
+    search_recursive(0, 0, [])
     
     # Return statistics
     elapsed = time.time() - state.start_time

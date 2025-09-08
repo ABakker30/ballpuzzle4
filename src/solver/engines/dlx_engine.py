@@ -7,6 +7,7 @@ from ...coords.symmetry_fcc import canonical_atom_tuple
 from ...solver.heuristics import tie_shuffle
 import random
 from ..engine_api import EngineProtocol
+from .coordinate_mapper import CoordinateMapper
 
 I3 = Tuple[int, int, int]
 
@@ -21,7 +22,7 @@ class DLXEngine(EngineProtocol):
         time_limit_seconds = options.get("time_limit_seconds", None)  # Match CLI parameter name
         max_results = options.get("max_results", float('inf'))  # Allow unlimited solutions by default
         
-        print(f"DLX DEBUG: Time limit parameter: {time_limit_seconds}")
+        # print(f"DLX DEBUG: Time limit parameter: {time_limit_seconds}")
         
         rnd = random.Random(seed)
         
@@ -33,7 +34,7 @@ class DLXEngine(EngineProtocol):
                 last_tick_ms = now_ms
                 # Check time limit during tick
                 if time_limit_seconds and (time.time() - start_time) >= time_limit_seconds:
-                    print(f"DLX DEBUG: Time limit reached during tick after {time.time() - start_time:.1f} seconds")
+                    # print(f"DLX DEBUG: Time limit reached during tick after {time.time() - start_time:.1f} seconds")
                     raise StopIteration("Time limit reached")
                 yield {"type": "tick", "data": kwargs}
         
@@ -48,6 +49,13 @@ class DLXEngine(EngineProtocol):
         container_set = set(container_coords)
         cells_sorted = sorted(container_coords)
         
+        # Initialize coordinate mapper for integer-based operations
+        mapper = CoordinateMapper()
+        
+        # Pre-map all container coordinates
+        container_coord_ids = mapper.map_coordinates(container_coords)
+        # print(f"DLX DEBUG: Mapped {len(container_coords)} container coordinates to integers")
+        
         last_tick_ms = 0
         results = 0
         
@@ -55,8 +63,8 @@ class DLXEngine(EngineProtocol):
         import time
         start_time = time.time()
         
-        # Build cell columns for exact cover
-        cell_cols: List[str] = [f"CELL:{i}" for i, _ in enumerate(cells_sorted)]
+        # Build column IDs (mapped container coordinates)
+        cell_col_ids = container_coord_ids
         cell_index: Dict[I3, int] = {c: i for i, c in enumerate(cells_sorted)}
         
         inv = inventory.get("pieces", {}) or inventory
@@ -113,22 +121,21 @@ class DLXEngine(EngineProtocol):
         print(f"DLX DEBUG: Prioritizing {len(prioritized)} known working combinations")
         
         # Use all combinations for finding multiple solutions
-        # valid_combinations = valid_combinations[:10]
-        
+        # print(f"DLX DEBUG: Generated {len(valid_combinations)} valid piece combinations")
         if not valid_combinations:
-            print("DLX DEBUG: No valid piece combinations found!")
+            # print("DLX DEBUG: No valid piece combinations found!")
             return
         
         # Try each combination until solution found or time limit reached
         for combo_idx, target_inventory in enumerate(valid_combinations):
             target_pieces = list(target_inventory.keys())
-            print(f"DLX DEBUG: Testing combination {combo_idx+1}/{len(valid_combinations)}: {target_inventory}")
-            print(f"DLX DEBUG: Starting candidate generation at {time.time() - start_time:.2f}s")
+            # print(f"DLX DEBUG: Testing combination {combo_idx+1}/{len(valid_combinations)}: {target_inventory}")
+            # print(f"DLX DEBUG: Starting candidate generation at {time.time() - start_time:.2f}s")
             
             # Generate candidates for this combination
-            lib = load_fcc_A_to_Y()
-            rows_cols: Dict[str, Set[str]] = {}
-            rows_meta: Dict[str, Dict[str, Any]] = {}
+            # Build rows (piece placements) and their column sets
+            rows_cols: Dict[int, Set[int]] = {}
+            rows_meta: Dict[int, Dict[str, Any]] = {}
             seen_canon: Set[Tuple[str, Tuple[I3, ...]]] = set()
             best_per_cellset: Dict[frozenset, Tuple[Tuple[int, int, int], str]] = {}
             
@@ -172,13 +179,13 @@ class DLXEngine(EngineProtocol):
             
             prioritized_positions = sorted(container_coords, key=position_priority)
             
-            print(f"DLX DEBUG: Prioritized pieces: {prioritized_pieces}")
-            print(f"DLX DEBUG: Candidate budget: {CANDIDATE_BUDGET}")
-            print(f"DLX DEBUG: Position sorting complete at {time.time() - start_time:.2f}s")
+            # print(f"DLX DEBUG: Prioritized pieces: {piece_priorities}")
+            # print(f"DLX DEBUG: Candidate budget: {CANDIDATE_BUDGET}")
+            # print(f"DLX DEBUG: Position sorting complete at {time.time() - start_time:.2f}s")
             
             # Generate candidates with budget and prioritization
             for pid in prioritized_pieces:
-                print(f"DLX DEBUG: Processing piece {pid} at {time.time() - start_time:.2f}s")
+                # print(f"DLX DEBUG: Processing piece {pid} at {time.time() - start_time:.2f}s")
                 if candidates_generated >= CANDIDATE_BUDGET:
                     print(f"DLX DEBUG: Candidate budget reached ({CANDIDATE_BUDGET}), stopping generation")
                     break
@@ -219,60 +226,64 @@ class DLXEngine(EngineProtocol):
                             continue
                         seen_canon.add(key)
                         
+                        # Map coordinates to integer IDs
                         try:
-                            cellset = frozenset(f"CELL:{cell_index[x]}" for x in cov)
+                            coord_ids = mapper.map_coordinates(list(cov))
+                            cellset = frozenset(coord_ids)
                         except KeyError:
                             continue
                         
-                        rid = f"{pid}|o{oi}|t{dx},{dy},{dz}"
-                        best_per_cellset[cellset] = ((0, 0, 0), rid)
+                        # Create row using mapper
+                        row_key = f"{pid}|o{oi}|t{dx},{dy},{dz}"
+                        row_id = mapper.map_row(row_key, pid, oi, (dx, dy, dz), list(cov))
+                        best_per_cellset[cellset] = ((0, 0, 0), row_id)
                         
                         candidates_generated += 1
                         if max_rows_cap and candidates_generated >= max_rows_cap:
                             break
                 
                 piece_candidates = candidates_generated - piece_candidates_start
-                print(f"DLX DEBUG: Generated {piece_candidates} candidates for piece {pid}")
+                # print(f"DLX DEBUG: Generated {piece_candidates} candidates for piece {pid}")
                 
                 # Check time limit during candidate generation
                 if time_limit_seconds:
                     elapsed = time.time() - start_time
                     remaining = time_limit_seconds - elapsed
-                    print(f"DLX DEBUG: Time budget: {time_limit_seconds}s, elapsed: {elapsed:.1f}s, remaining: {remaining:.1f}s")
+                    # print(f"DLX DEBUG: Time budget: {time_limit_seconds}s, elapsed: {elapsed:.1f}s, remaining: {remaining:.1f}s")
                     if elapsed >= time_limit_seconds:
-                        print(f"DLX DEBUG: Time limit reached during candidate generation after {elapsed:.1f} seconds")
+                        # print(f"DLX DEBUG: Time limit reached during candidate generation after {elapsed:.1f} seconds")
                         raise StopIteration("Time limit reached")
             
             rowsBuilt = candidates_generated
             
             # Finalize rows for this combination
             piece_candidate_counts = {}
-            for cellset, (_score, base_rid) in best_per_cellset.items():
-                pid, rest = base_rid.split("|", 1)
-                oi = int(rest.split("|")[0][1:])
-                t_str = rest.split("|")[1][1:]
-                dx, dy, dz = (int(x) for x in t_str.split(","))
+            for cellset, (_score, row_id) in best_per_cellset.items():
+                # Get placement info from mapper
+                placement_info = mapper.get_placement_info(row_id)
+                pid = placement_info["piece_id"]
+                oi = placement_info["orientation_idx"]
+                position = placement_info["position"]
+                covered_cells = placement_info["coordinates"]
                 
-                idx_to_cell = {f"CELL:{i}": c for i, c in enumerate(cells_sorted)}
-                covered_cells = tuple(sorted(idx_to_cell[c] for c in cellset))
-                meta = {"piece": pid, "ori": oi, "t": (dx, dy, dz), "covered": covered_cells}
+                meta = {"piece": pid, "ori": oi, "t": position, "covered": covered_cells}
                 
-                rows_cols[base_rid] = cellset
-                rows_meta[base_rid] = meta
+                rows_cols[row_id] = cellset
+                rows_meta[row_id] = meta
                 piece_candidate_counts[pid] = piece_candidate_counts.get(pid, 0) + 1
             
-            print(f"DLX DEBUG: Candidate generation complete at {time.time() - start_time:.2f}s")
-            print(f"DLX DEBUG: Generated {len(rows_cols)} candidates for combination")
-            for pid in sorted(piece_candidate_counts.keys()):
-                print(f"DLX DEBUG: Piece {pid}: {piece_candidate_counts[pid]} candidates")
+            # print(f"DLX DEBUG: Candidate generation complete at {time.time() - start_time:.2f}s")
+            # print(f"DLX DEBUG: Generated {len(rows_cols)} candidates for combination")
+            # for pid in sorted(piece_candidate_counts.keys()):
+            #     print(f"DLX DEBUG: Piece {pid}: {piece_candidate_counts[pid]} candidates")
             
             if not rows_cols:
-                print("DLX DEBUG: No candidates for this combination, trying next")
+                # print("DLX DEBUG: No candidates for this combination, trying next")
                 continue
             
             # Algorithm X setup for this combination
-            columns: List[str] = cell_cols
-            col_rows: Dict[str, Set[str]] = {col: set() for col in columns}
+            columns: List[int] = cell_col_ids
+            col_rows: Dict[int, Set[int]] = {col: set() for col in columns}
             for rid, colset in rows_cols.items():
                 for col in colset:
                     col_rows[col].add(rid)
@@ -280,7 +291,7 @@ class DLXEngine(EngineProtocol):
             row_ids = list(rows_cols.keys())
             row_ids = tie_shuffle(row_ids, seed)
             
-            def choose_col(active_cols: Set[str]) -> Optional[str]:
+            def choose_col(active_cols: Set[int]) -> Optional[int]:
                 best, best_len = None, float('inf')
                 for col in active_cols:
                     ln = len(col_rows[col] & active_rows)
@@ -292,12 +303,12 @@ class DLXEngine(EngineProtocol):
                 return best
             
             # Algorithm X search state
-            active_cols: Set[str] = set(columns)
-            active_rows: Set[str] = set(rows_cols.keys())
-            solution_rows: List[str] = []
+            active_cols: Set[int] = set(columns)
+            active_rows: Set[int] = set(rows_cols.keys())
+            solution_rows: List[int] = []
             piece_usage: Dict[str, int] = {pid: 0 for pid in target_pieces}
             
-            def cover(col: str, removed_cols: List[str], removed_rows: List[str]):
+            def cover(col: int, removed_cols: List[int], removed_rows: List[int]):
                 if col not in active_cols:
                     return
                 active_cols.remove(col)
@@ -306,14 +317,14 @@ class DLXEngine(EngineProtocol):
                     active_rows.remove(r)
                     removed_rows.append(r)
             
-            def uncover(removed_cols: List[str], removed_rows: List[str]):
+            def uncover(removed_cols: List[int], removed_rows: List[int]):
                 while removed_rows:
                     active_rows.add(removed_rows.pop())
                 while removed_cols:
                     active_cols.add(removed_cols.pop())
             
             # Core Algorithm X search
-            def search() -> Iterator[List[str]]:
+            def search() -> Iterator[List[int]]:
                 nonlocal results
                 
                 # Time check during recursive search
@@ -321,7 +332,7 @@ class DLXEngine(EngineProtocol):
                     raise StopIteration("Time limit reached")
                 
                 if len(active_cols) == 0:
-                    print(f"DLX DEBUG: Found solution with {len(solution_rows)} pieces")
+                    # print(f"DLX DEBUG: Found solution with {len(solution_rows)} pieces")
                     yield list(solution_rows)
                     return  # Continue searching for more solutions
                 
@@ -360,7 +371,7 @@ class DLXEngine(EngineProtocol):
             canonical_sigs = set()
             combination_found_solution = False
             
-            print(f"DLX DEBUG: Starting Algorithm X search with {len(active_cols)} columns, {len(active_rows)} rows")
+            # print(f"DLX DEBUG: Starting Algorithm X search with {len(columns)} columns, {len(row_ids)} rows")
             
             for sol_rows in search():
                 if isinstance(sol_rows, dict) and sol_rows.get("type") == "tick":
@@ -371,18 +382,17 @@ class DLXEngine(EngineProtocol):
                 placements = []
                 pieces_used = {}
                 
-                for row in sol_rows:
-                    meta = rows_meta[row]
+                for row_id in sol_rows:
+                    meta = rows_meta[row_id]
                     piece_id = meta["piece"]
                     pieces_used[piece_id] = pieces_used.get(piece_id, 0) + 1
                     
-                    placement = {
+                    placements.append({
                         "piece": piece_id,
-                        "ori": meta["ori"],
-                        "t": list(meta["t"]),
+                        "orientation": meta["ori"],
+                        "position": list(meta["t"]),
                         "coordinates": [list(coord) for coord in meta["covered"]]
-                    }
-                    placements.append(placement)
+                    })
                 
                 # Canonical deduplication - use simple hash of placement coordinates
                 from ...coords.canonical import cid_sha256

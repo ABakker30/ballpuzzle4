@@ -74,10 +74,6 @@ class EngineCAdapter(EngineProtocol):
             index_of_cell, cells_by_index, piece_cell_counts
         ) = build_placement_data(container_cells, pieces_data)
         
-        # Debug output (remove for production)
-        # print(f"DEBUG: Container cells: {len(container_cells)}")
-        # print(f"DEBUG: Pieces data: {len(pieces_data)} pieces")
-        # print(f"DEBUG: Generated candidates: {len(candidates)}")
         
         if not candidates:
             yield self._emit_done(start_time, seed, 0, 0, 0)
@@ -89,38 +85,38 @@ class EngineCAdapter(EngineProtocol):
         # Solution and progress tracking
         solutions_found = 0
         
-        solutions = []
+        # Use generator pattern for interruptible search
+        search_generator = self._run_interruptible_search(
+            candidates, covers_by_cell, candidate_meta, all_mask,
+            cells_by_index, index_of_cell, piece_inventory,
+            max_results, time_budget_s, pruning_level, shuffle_policy,
+            rng, snapshot_every_nodes, start_time, seed
+        )
+        
+        # Yield events as they come from the search
+        for event in search_generator:
+            yield event
+    
+    def _run_interruptible_search(self, candidates, covers_by_cell, candidate_meta, all_mask,
+                                 cells_by_index, index_of_cell, piece_inventory,
+                                 max_results, time_budget_s, pruning_level, shuffle_policy,
+                                 rng, snapshot_every_nodes, start_time, seed):
+        """Run search with standard yield-after-progress pattern."""
+        from .search import dfs_solve
+        
+        solutions_found = 0
+        solution_placements = []
         
         def on_solution(placements):
-            nonlocal solutions_found
+            nonlocal solutions_found, solution_placements
             solutions_found += 1
-            
-            # Compute canonical signature (simplified)
-            placement_str = str(sorted(placements))
-            sig = hashlib.sha256(placement_str.encode()).hexdigest()
-            
-            solution = {
-                "v": 1,
-                "t_ms": int((time.time() - start_time) * 1000),
-                "type": "solution",
-                "solution": {
-                    "containerCidSha256": self._compute_container_cid(container_cells),
-                    "lattice": "fcc",
-                    "piecesUsed": piece_inventory,
-                    "placements": placements,
-                    "sid_state_sha256": sig,
-                    "sid_route_sha256": sig,
-                    "sid_state_canon_sha256": sig
-                }
-            }
-            solutions.append(solution)
+            solution_placements = placements  # Store the solution
         
-        def on_progress(nodes, depth, elapsed_s):
-            elapsed_ms = int(elapsed_s * 1000)
-            # Progress events can be yielded here if needed
-            pass
+        def on_progress(nodes, depth, elapsed):
+            # Progress will be handled by the CLI layer
+            return True  # Continue search
         
-        # Run search
+        # Use the proper DFS search
         stats = dfs_solve(
             candidates=candidates,
             covers_by_cell=covers_by_cell,
@@ -139,26 +135,20 @@ class EngineCAdapter(EngineProtocol):
             on_progress=on_progress
         )
         
-        # Yield all solutions found
-        for solution in solutions:
-            yield solution
-        
-        # Emit done event
-        elapsed_ms = int((time.time() - start_time) * 1000)
-        yield {
-            "v": 1,
-            "t_ms": elapsed_ms,
-            "type": "done",
-            "metrics": {
-                "solutions": stats["solutions"],
-                "nodes": stats["nodes"],
-                "pruned": stats["pruned"],
-                "bestDepth": stats["bestDepth"],
-                "smallMode": False,
-                "symGroup": 1,
-                "seed": seed
+        # Emit solution event if found
+        if solutions_found > 0 and solution_placements:
+            yield {
+                "type": "solution",
+                "v": 1,
+                "t_ms": int((time.time() - start_time) * 1000),
+                "solution": {
+                    "placements": solution_placements,
+                    "piecesUsed": piece_inventory
+                }
             }
-        }
+        
+        # Emit final done event
+        yield self._emit_done(start_time, seed, solutions_found, stats["nodes"], stats["pruned"])
     
     def _emit_done(self, start_time: float, seed: int, solutions: int, nodes: int, pruned: int):
         """Helper to emit done event."""
