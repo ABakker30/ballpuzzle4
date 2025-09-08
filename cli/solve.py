@@ -57,13 +57,14 @@ def _load_inventory_json(path: str) -> dict[str,int]:
 
 def _resolve_inventory(args) -> dict[str,int]:
     """
-    Precedence: --pieces (inline) > --inventory (file) > {}.
+    Precedence: --pieces (inline) > --inventory (file) > default all pieces (A-Y = 1 each).
     """
     if args.pieces:
         return _parse_inline_pieces(args.pieces)
     if args.inventory:
         return _load_inventory_json(args.inventory)
-    return {}
+    # Default: all pieces A-Y available once each
+    return {chr(ord('A') + i): 1 for i in range(25)}
 
 def main():
     ap = argparse.ArgumentParser()

@@ -74,20 +74,32 @@ class DLXEngine(EngineProtocol):
         # Generate all valid piece combinations that sum to container size
         def generate_piece_combinations(container_size: int, available_pieces: Dict[str, int]):
             """Generate all piece combinations that sum to exactly container_size cells."""
-            from itertools import combinations_with_replacement
-            
             pieces_needed = container_size // 4
             if container_size % 4 != 0:
-                return []
+                return []  # Container size must be divisible by 4
             
-            piece_names = list(available_pieces.keys())
+            # Optimization: If we have exactly the pieces we need (all inventory = 1 and pieces_needed = total pieces)
+            total_available = sum(available_pieces.values())
+            all_ones = all(count == 1 for count in available_pieces.values())
+            
+            if pieces_needed == total_available and all_ones:
+                # Use all pieces exactly once - no enumeration needed
+                return [available_pieces.copy()]
+            
+            # For other cases, use the full enumeration
+            from itertools import combinations_with_replacement
+            
+            # Get available piece types and their counts
+            piece_types = list(available_pieces.keys())
             combinations = []
             
-            for combo in combinations_with_replacement(piece_names, pieces_needed):
+            # Generate all combinations of pieces that sum to pieces_needed
+            for combo in combinations_with_replacement(piece_types, pieces_needed):
                 piece_count = {}
                 for piece in combo:
                     piece_count[piece] = piece_count.get(piece, 0) + 1
                 
+                # Check if this combination is valid (within inventory limits)
                 valid = True
                 for piece, count in piece_count.items():
                     if count > available_pieces.get(piece, 0):
@@ -100,7 +112,7 @@ class DLXEngine(EngineProtocol):
             return combinations
         
         valid_combinations = generate_piece_combinations(container_size, inv)
-        print(f"DLX DEBUG: Container size: {container_size}, Inventory: {inv}")
+        print(f"DLX DEBUG: Container size: {len(container_coords)}, Inventory: {inv}")
         print(f"DLX DEBUG: Found {len(valid_combinations)} valid piece combinations")
         
         # Focus on known working combinations that have multiple solutions
@@ -141,7 +153,7 @@ class DLXEngine(EngineProtocol):
             best_per_cellset: Dict[frozenset, Tuple[Tuple[int, int, int], str]] = {}
             
             # Candidate budget and prioritization strategy
-            CANDIDATE_BUDGET = 800  # Maximum candidates per combination
+            CANDIDATE_BUDGET = 5000  # Maximum candidates per combination
             candidates_generated = 0
             
             # Sort pieces by constraint level (fewer orientations = higher priority)
