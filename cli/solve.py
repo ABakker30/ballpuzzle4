@@ -69,7 +69,7 @@ def _resolve_inventory(args) -> dict[str,int]:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("container", help="path to FCC container json")
-    ap.add_argument("--engine", default="current", choices=["current","dfs","dfs-bitmask","dlx","engine-c"])
+    ap.add_argument("--engine", choices=["dfs", "dlx"], default="dfs", help="solver engine")
     ap.add_argument("--eventlog", default="events.jsonl")
     ap.add_argument("--solution", default="solution.json")
     ap.add_argument("--seed", type=int, default=9000)
@@ -84,6 +84,7 @@ def main():
     ap.add_argument("--mrv-pieces", action="store_true", help="enable MRV-based piece ordering")
     ap.add_argument("--support-bias", action="store_true", help="enable support-biased placement ordering")
     ap.add_argument("--hole4", action="store_true", help="enable hole4 detection pruning (disconnected void detection)")
+    ap.add_argument("--piece-rotation-interval", type=float, default=5.0, help="seconds between piece rotation for diversified search (DFS engine only)")
     # NEW: inventory inputs
     ap.add_argument("--inventory", help="path to inventory JSON (with {\"pieces\":{...}})")
     ap.add_argument("--pieces", help="inline pieces, e.g. A=1,B=2 (takes precedence over --inventory)")
@@ -108,7 +109,7 @@ def main():
     meta = {"engine": engine.name, "seed": args.seed,
             "flags": {"mrvPieces": bool(args.mrv_pieces), "supportBias": bool(args.support_bias)}}
     # Build options bundle
-    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth), "maxRows": int(args.caps_max_rows)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms), "time_limit": int(args.time_limit) if args.time_limit > 0 else 0, "hole4": bool(args.hole4)}
+    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth), "maxRows": int(args.caps_max_rows)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms), "time_limit": int(args.time_limit) if args.time_limit > 0 else 0, "hole4": bool(args.hole4), "piece_rotation_interval": float(args.piece_rotation_interval)}
 
     emitted_solution = False
 

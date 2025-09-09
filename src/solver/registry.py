@@ -2,20 +2,15 @@ from typing import Dict
 from .engine_api import EngineProtocol
 from .engines.current_engine import CurrentEngine
 from .engines.dfs_engine import DFSEngine
-from .engines.dfs_bitmask_engine import DFSBitmaskEngine
 from .engines.dlx_engine import DLXEngine
-from .engines.engine_c import EngineCAdapter
 
-_REGISTRY: Dict[str, EngineProtocol] = {
-    "current": CurrentEngine(),
+ENGINES = {
     "dfs": DFSEngine(),
-    "dfs-bitmask": DFSBitmaskEngine(),
     "dlx": DLXEngine(),
-    "engine-c": EngineCAdapter(),
 }
 
 def get_engine(name: str) -> EngineProtocol:
     try:
-        return _REGISTRY[name]
+        return ENGINES[name]
     except KeyError:
-        raise SystemExit(f"--engine must be one of: {', '.join(_REGISTRY.keys())}")
+        raise SystemExit(f"--engine must be one of: {', '.join(ENGINES.keys())}")
