@@ -2,12 +2,14 @@ from typing import Dict
 from .engine_api import EngineProtocol
 from .engines.current_engine import CurrentEngine
 from .engines.dfs_engine import DFSEngine
+from .engines.dfs_bitmask_engine import DFSBitmaskEngine
 from .engines.dlx_engine import DLXEngine
 from .engines.engine_c import EngineCAdapter
 
 _REGISTRY: Dict[str, EngineProtocol] = {
     "current": CurrentEngine(),
     "dfs": DFSEngine(),
+    "dfs-bitmask": DFSBitmaskEngine(),
     "dlx": DLXEngine(),
     "engine-c": EngineCAdapter(),
 }

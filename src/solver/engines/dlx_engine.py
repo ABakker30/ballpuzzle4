@@ -20,10 +20,10 @@ class DLXEngine(EngineProtocol):
         
         seed = options.get("seed", 42)
         max_rows_cap = options.get("max_rows_cap")
-        time_limit_seconds = options.get("time_limit_seconds", None)  # Match CLI parameter name
+        time_limit = options.get("time_limit", 0)  # Standardized parameter name
         max_results = options.get("max_results", float('inf'))  # Allow unlimited solutions by default
         
-        # print(f"DLX DEBUG: Time limit parameter: {time_limit_seconds}")
+        # print(f"DLX DEBUG: Time limit parameter: {time_limit}")
         
         rnd = random.Random(seed)
         
@@ -34,9 +34,9 @@ class DLXEngine(EngineProtocol):
             if now_ms - last_tick_ms >= 100:
                 last_tick_ms = now_ms
                 # Check time limit during tick
-                if time_limit_seconds and (time.time() - start_time) >= time_limit_seconds:
+                if time_limit > 0 and (time.time() - start_time) >= time_limit:
                     # print(f"DLX DEBUG: Time limit reached during tick after {time.time() - start_time:.1f} seconds")
-                    raise StopIteration("Time limit reached")
+                    return
                 yield {"type": "tick", "data": kwargs}
         
         # Extract coordinates from container dict if needed
@@ -259,13 +259,13 @@ class DLXEngine(EngineProtocol):
                 # print(f"DLX DEBUG: Generated {piece_candidates} candidates for piece {pid}")
                 
                 # Check time limit during candidate generation
-                if time_limit_seconds:
+                if time_limit > 0:
                     elapsed = time.time() - start_time
-                    remaining = time_limit_seconds - elapsed
-                    # print(f"DLX DEBUG: Time budget: {time_limit_seconds}s, elapsed: {elapsed:.1f}s, remaining: {remaining:.1f}s")
-                    if elapsed >= time_limit_seconds:
+                    remaining = time_limit - elapsed
+                    # print(f"DLX DEBUG: Time budget: {time_limit}s, elapsed: {elapsed:.1f}s, remaining: {remaining:.1f}s")
+                    if elapsed >= time_limit:
                         # print(f"DLX DEBUG: Time limit reached during candidate generation after {elapsed:.1f} seconds")
-                        raise StopIteration("Time limit reached")
+                        return
             
             rowsBuilt = candidates_generated
             
@@ -322,8 +322,8 @@ class DLXEngine(EngineProtocol):
                 nonlocal results
                 
                 # Time check during recursive search
-                if time_limit_seconds and (time.time() - start_time) >= time_limit_seconds:
-                    raise StopIteration("Time limit reached")
+                if time_limit > 0 and (time.time() - start_time) >= time_limit:
+                    return
                 
                 if bitmap_state.is_solved():
                     # print(f"DLX DEBUG: Found solution with {len(solution_rows)} pieces")
@@ -407,7 +407,7 @@ class DLXEngine(EngineProtocol):
                     continue
                 canonical_sigs.add(sig)
                 
-                print(f"DLX DEBUG: Emitting solution with {len(placements)} placements")
+                # DEBUG: Emitting solution with {len(placements)} placements
                 yield {
                     "type": "solution",
                     "solution": {
