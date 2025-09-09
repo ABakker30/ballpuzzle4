@@ -3,6 +3,8 @@
 Engine-native FCC solver for lattice puzzles using A–Y pieces.  
 Features both DFS and DLX engines, schema-validated event logs, and canonical solution verification.
 
+See [UI Design Specification](docs/ui_design.md) for planned features.
+
 ## Quickstart
 
 Install requirements (Python 3.10+):

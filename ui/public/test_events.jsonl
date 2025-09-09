@@ -1,0 +1,11 @@
+{"t": 0.001, "type": "node"}
+{"t": 0.002, "type": "placement", "piece": 0, "orient": 5, "i": 0, "j": 0, "k": 0}
+{"t": 0.003, "type": "node"}
+{"t": 0.004, "type": "placement", "piece": 4, "orient": 12, "i": 1, "j": 0, "k": 1}
+{"t": 0.005, "type": "node"}
+{"t": 0.006, "type": "pruned", "count": 15}
+{"t": 0.007, "type": "placement", "piece": 19, "orient": 7, "i": 2, "j": 1, "k": 0}
+{"t": 0.008, "type": "node"}
+{"t": 0.009, "type": "placement", "piece": 7, "orient": 3, "i": 0, "j": 2, "k": 1}
+{"t": 0.010, "type": "solution", "sid": "test_solution_123"}
+{"t": 0.011, "type": "done", "nodes": 4, "pruned": 15, "depth": 4, "elapsed_ms": 11}

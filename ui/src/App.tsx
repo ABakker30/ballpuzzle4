@@ -1,10 +1,14 @@
 import React from "react";
 import { FilePicker } from "./components/FilePicker";
 import { Viewer3D } from "./components/Viewer3D";
+import StatusPanel from "./components/StatusPanel";
+import RunForm from "./components/RunForm";
+import ViewPage from "./pages/ViewPage";
 import { useAppStore } from "./store";
+import "./styles/theme.css";
 import "./styles.css";
 
-function TabButton({ id, label }: { id: string; label: string }) {
+function TabButton({ id, label }: { id: "home" | "viewer" | "dashboard" | "status" | "run" | "view"; label: string }) {
   const tab = useAppStore(s => s.tab);
   const setTab = useAppStore(s => s.setTab);
   const active = tab === id;
@@ -38,7 +42,17 @@ function PlacementList() {
 
 export default function App() {
   const tab = useAppStore(s => s.tab);
-  const { containerStatus, solutionStatus, eventsStatus } = useAppStore();
+  const containerStatus = useAppStore(s => s.containerStatus);
+  const solutionStatus = useAppStore(s => s.solutionStatus);
+  const eventsStatus = useAppStore(s => s.eventsStatus);
+
+  // Initialize theme from localStorage
+  React.useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) {
+      document.documentElement.dataset.theme = savedTheme;
+    }
+  }, []);
 
   return (
     <div className="app">
@@ -48,7 +62,21 @@ export default function App() {
           <TabButton id="home" label="Home" />
           <TabButton id="viewer" label="Viewer (placeholder)" />
           <TabButton id="dashboard" label="Dashboard (placeholder)" />
+          <TabButton id="status" label="Status" />
+          <TabButton id="run" label="Run" />
+          <TabButton id="view" label="View" />
         </div>
+        <button 
+          className="button" 
+          onClick={() => {
+            const theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+            document.documentElement.dataset.theme = theme;
+            localStorage.setItem('theme', theme);
+          }}
+          style={{ marginLeft: 'auto' }}
+        >
+          🌓
+        </button>
       </header>
 
       <main>
@@ -93,6 +121,12 @@ export default function App() {
             </ul>
           </div>
         )}
+
+        {tab === "status" && <StatusPanel />}
+
+        {tab === "run" && <RunForm />}
+
+        {tab === "view" && <ViewPage />}
       </main>
     </div>
   );

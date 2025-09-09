@@ -1,6 +1,7 @@
 """Bitmask-optimized DFS engine for high-performance ball puzzle solving."""
 
 import time
+import uuid
 from typing import Iterator, Dict, Any, Set, List, Tuple
 from ..engine_api import EngineProtocol, EngineOptions, SolveEvent
 from ...solver.tt import OccMask, SeenMasks
@@ -13,6 +14,8 @@ from ...io.solution_sig import canonical_state_signature, extract_occupied_cells
 from ...solver.symbreak import container_symmetry_group
 from .engine_c.lattice_fcc import FCC_NEIGHBORS
 from .engine_c.bitset import popcount, bitset_from_indices, bitset_to_indices, bitset_intersects
+from ...common.status_snapshot import Snapshot, StackItem, ContainerInfo, now_ms
+from ...common.status_emitter import StatusEmitter
 import itertools
 
 I3 = Tuple[int, int, int]
@@ -142,6 +145,7 @@ class DFSEngine(EngineProtocol):
     def solve(self, container, inventory, pieces, options: EngineOptions) -> Iterator[SolveEvent]:
         import time
         t0 = time.time()
+        start_time_ms = now_ms()
         seed = int(options.get("seed", 0))
         time_limit = float(options.get("time_limit", float('inf')))
         max_results = int(options.get("max_results", 1))
@@ -149,6 +153,26 @@ class DFSEngine(EngineProtocol):
         
         # Piece rotation strategy parameters
         piece_rotation_interval = options.get("piece_rotation_interval", 5.0)  # seconds
+        
+        # Status snapshot parameters
+        status_json = options.get("status_json")
+        status_interval_ms = options.get("status_interval_ms", 1000)
+        status_max_stack = options.get("status_max_stack", 512)
+        status_phase = options.get("status_phase")
+        
+        # Debug status options to file
+        with open("dfs_debug.log", "w") as f:
+            f.write(f"DEBUG: All options keys: {list(options.keys())}\n")
+            f.write(f"DEBUG: status_json option: {status_json}\n")
+            if status_json:
+                f.write(f"DEBUG: Status JSON enabled - file: {status_json}, interval: {status_interval_ms}ms\n")
+        
+        # Generate run ID
+        run_id = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
+        
+        # Container info for status
+        container_cid = container.get("cid_sha256", f"container_{hash(str(container))}")
+        container_cells_count = len(container["coordinates"])
         
         # Load pieces and create inventory
         pieces_dict = load_fcc_A_to_Y()
@@ -164,6 +188,112 @@ class DFSEngine(EngineProtocol):
         # Calculate pieces needed
         container_size = len(container_cells)
         pieces_needed = container_size // 4
+        
+        # Initialize shared state for status snapshots
+        solutions_found = 0
+        nodes_explored = 0
+        max_depth_reached = 0
+        max_pieces_placed = 0
+        current_placement_stack = []
+        
+        # Create piece name to index mapping for status snapshots
+        piece_names = sorted(pieces_dict.keys())
+        piece_name_to_idx = {name: idx for idx, name in enumerate(piece_names)}
+        
+        # Status snapshot builder function
+        def build_snapshot() -> Snapshot:
+            try:
+                with open("dfs_debug.log", "a") as f:
+                    f.write(f"DEBUG: build_snapshot called, stack length: {len(current_placement_stack)}\n")
+                
+                # Convert placement stack to StackItem format
+                stack_items = []
+                for pl, _ in current_placement_stack:
+                    piece_idx = piece_name_to_idx.get(pl.piece, 0)
+                    # Use anchor cell (first coordinate) for position
+                    anchor = pl.covered[0] if pl.covered else (0, 0, 0)
+                    stack_items.append(StackItem(
+                        piece=piece_idx,
+                        orient=pl.ori_idx,  # Use ori_idx instead of ori
+                        i=int(anchor[0]),
+                        j=int(anchor[1]),
+                        k=int(anchor[2])
+                    ))
+                
+                with open("dfs_debug.log", "a") as f:
+                    f.write(f"DEBUG: Created {len(stack_items)} stack items\n")
+                
+                # Apply stack truncation if needed
+                truncated = False
+                if len(stack_items) > status_max_stack:
+                    stack_items = stack_items[-status_max_stack:]  # keep tail
+                    truncated = True
+                
+                elapsed = now_ms() - start_time_ms
+                
+                snapshot = Snapshot(
+                    v=1,
+                    ts_ms=now_ms(),
+                    engine="dfs",
+                    run_id=run_id,
+                    container=ContainerInfo(cid=container_cid, cells=container_cells_count),
+                    k=None,  # DFS doesn't use k parameter
+                    nodes=int(nodes_explored),
+                    pruned=0,  # DFS doesn't track pruned separately
+                    depth=int(len(current_placement_stack)),
+                    best_depth=int(max_depth_reached) if max_depth_reached > 0 else None,
+                    solutions=int(solutions_found),
+                    elapsed_ms=int(elapsed),
+                    stack=stack_items,
+                    stack_truncated=truncated,
+                    hash_container_cid=container_cid,
+                    hash_solution_sid=None,
+                    phase=status_phase
+                )
+                
+                with open("dfs_debug.log", "a") as f:
+                    f.write(f"DEBUG: Snapshot created successfully\n")
+                return snapshot
+                
+            except Exception as e:
+                with open("dfs_debug.log", "a") as f:
+                    f.write(f"DEBUG: Error in build_snapshot: {e}\n")
+                # Return a minimal snapshot on error
+                return Snapshot(
+                    v=1,
+                    ts_ms=now_ms(),
+                    engine="dfs",
+                    run_id=run_id,
+                    container=ContainerInfo(cid=container_cid, cells=container_cells_count),
+                    k=None,
+                    nodes=0,
+                    pruned=0,
+                    depth=0,
+                    best_depth=None,
+                    solutions=0,
+                    elapsed_ms=0,
+                    stack=[],
+                    stack_truncated=False,
+                    hash_container_cid=container_cid,
+                    hash_solution_sid=None,
+                    phase=status_phase
+                )
+        
+        # Initialize status emitter if requested
+        status_emitter = None
+        if status_json:
+            try:
+                with open("dfs_debug.log", "a") as f:
+                    f.write(f"DEBUG: Creating StatusEmitter with file: {status_json}\n")
+                status_emitter = StatusEmitter(status_json, status_interval_ms)
+                with open("dfs_debug.log", "a") as f:
+                    f.write(f"DEBUG: StatusEmitter created, starting...\n")
+                status_emitter.start(build_snapshot)
+                with open("dfs_debug.log", "a") as f:
+                    f.write(f"DEBUG: StatusEmitter started successfully\n")
+            except Exception as e:
+                with open("dfs_debug.log", "a") as f:
+                    f.write(f"DEBUG: Error creating/starting StatusEmitter: {e}\n")
         
         # Generate piece combinations with chunking and time limits
         def generate_piece_combinations_chunked(container_size: int, available_pieces: Dict[str, int], max_combinations: int = 10000):
@@ -252,6 +382,8 @@ class DFSEngine(EngineProtocol):
         valid_combinations = prioritized + valid_combinations
         
         if not valid_combinations:
+            if status_emitter:
+                status_emitter.stop()
             yield {
                 "type": "done",
                 "metrics": {
@@ -261,11 +393,6 @@ class DFSEngine(EngineProtocol):
                 }
             }
             return
-        
-        solutions_found = 0
-        nodes_explored = 0
-        max_depth_reached = 0
-        max_pieces_placed = 0
         
         # Piece rotation strategy - cycle through starting pieces
         available_pieces = sorted(set().union(*valid_combinations))
@@ -298,7 +425,10 @@ class DFSEngine(EngineProtocol):
             state.occupied_mask = 0
             
             def dfs(depth: int, placement_stack: List[Tuple[Placement, int]]) -> Iterator[SolveEvent]:
-                nonlocal solutions_found, nodes_explored, max_depth_reached, max_pieces_placed
+                nonlocal solutions_found, nodes_explored, max_depth_reached, max_pieces_placed, current_placement_stack
+                
+                # Update shared placement stack for status snapshots
+                current_placement_stack = placement_stack.copy()
                 
                 # Time limit check
                 if time_limit > 0 and (time.time() - t0) >= time_limit:
@@ -432,6 +562,10 @@ class DFSEngine(EngineProtocol):
                 yield ev
                 if solutions_found >= max_results:
                     break
+        
+        # Stop status emitter if running
+        if status_emitter:
+            status_emitter.stop()
         
         # Emit final done event
         final_metrics = {

@@ -1,10 +1,13 @@
 """DLX Engine with piece combination iteration for exact cover solving."""
 
+import time
 from typing import Iterator, Dict, List, Set, Any, Tuple, Optional
 from ...pieces.library_fcc_v1 import load_fcc_A_to_Y
 from ...pieces.sphere_orientations import get_piece_orientations
 from ...coords.symmetry_fcc import canonical_atom_tuple
 from ...solver.heuristics import tie_shuffle
+from ...common.status_snapshot import Snapshot, StackItem, ContainerInfo, now_ms
+from ...common.status_emitter import StatusEmitter
 import random
 from ..engine_api import EngineProtocol
 from .coordinate_mapper import CoordinateMapper
@@ -22,6 +25,16 @@ class DLXEngine(EngineProtocol):
         max_rows_cap = options.get("max_rows_cap")
         time_limit = options.get("time_limit", 0)  # Standardized parameter name
         max_results = options.get("max_results", float('inf'))  # Allow unlimited solutions by default
+        
+        # Status snapshot parameters
+        status_json = options.get("status_json")
+        status_interval_ms = options.get("status_interval_ms", 1000)
+        status_max_stack = options.get("status_max_stack", 512)
+        status_phase = options.get("status_phase")
+        
+        # Generate run ID and start time
+        start_time_ms = now_ms()
+        run_id = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
         
         # print(f"DLX DEBUG: Time limit parameter: {time_limit}")
         
@@ -42,13 +55,83 @@ class DLXEngine(EngineProtocol):
         # Extract coordinates from container dict if needed
         if isinstance(container, dict) and "coordinates" in container:
             container_coords = [tuple(coord) for coord in container["coordinates"]]
+            container_cid = container.get("cid_sha256", f"container_{hash(str(container))}")
         elif isinstance(container, (list, tuple)):
             container_coords = [tuple(coord) for coord in container]
+            container_cid = f"container_{hash(str(container_coords))}"
         else:
             container_coords = []
+            container_cid = "container_empty"
         
         container_set = set(container_coords)
         cells_sorted = sorted(container_coords)
+        
+        # Initialize shared state for status snapshots
+        solutions_found = 0
+        nodes_explored = 0
+        current_partial_solution = []
+        current_combination_idx = 0
+        total_combinations = 0
+        
+        # Create piece name to index mapping for status snapshots
+        pieces_dict = load_fcc_A_to_Y()
+        piece_names = sorted(pieces_dict.keys())
+        piece_name_to_idx = {name: idx for idx, name in enumerate(piece_names)}
+        
+        # Status snapshot builder function
+        def build_snapshot() -> Snapshot:
+            # Convert partial solution to StackItem format
+            stack_items = []
+            for row_data in current_partial_solution:
+                # Extract piece info from row data
+                piece_name = row_data.get('piece', 'A')
+                piece_idx = piece_name_to_idx.get(piece_name, 0)
+                orientation = row_data.get('ori', 0)
+                # Use first coordinate as anchor
+                coords = row_data.get('coords', [(0, 0, 0)])
+                anchor = coords[0] if coords else (0, 0, 0)
+                
+                stack_items.append(StackItem(
+                    piece=piece_idx,
+                    orient=orientation,
+                    i=int(anchor[0]),
+                    j=int(anchor[1]),
+                    k=int(anchor[2])
+                ))
+            
+            # Apply stack truncation if needed
+            truncated = False
+            if len(stack_items) > status_max_stack:
+                stack_items = stack_items[-status_max_stack:]  # keep tail
+                truncated = True
+            
+            elapsed = now_ms() - start_time_ms
+            
+            return Snapshot(
+                v=1,
+                ts_ms=now_ms(),
+                engine="dlx",
+                run_id=run_id,
+                container=ContainerInfo(cid=container_cid, cells=len(container_coords)),
+                k=current_combination_idx,  # DLX uses combination index as k
+                nodes=int(nodes_explored),
+                pruned=0,  # DLX doesn't track pruned separately
+                depth=int(len(current_partial_solution)),
+                best_depth=None,  # DLX doesn't track best depth
+                solutions=int(solutions_found),
+                elapsed_ms=int(elapsed),
+                stack=stack_items,
+                stack_truncated=truncated,
+                hash_container_cid=container_cid,
+                hash_solution_sid=None,
+                phase=status_phase
+            )
+        
+        # Initialize status emitter if requested
+        status_emitter = None
+        if status_json:
+            status_emitter = StatusEmitter(status_json, status_interval_ms)
+            status_emitter.start(build_snapshot)
         
         # Initialize coordinate mapper for integer-based operations
         mapper = CoordinateMapper()
@@ -61,7 +144,6 @@ class DLXEngine(EngineProtocol):
         results = 0
         
         # Track start time for time limit
-        import time
         start_time = time.time()
         
         # Build column IDs (mapped container coordinates)
@@ -139,8 +221,14 @@ class DLXEngine(EngineProtocol):
             # print("DLX DEBUG: No valid piece combinations found!")
             return
         
+        # Update total combinations for status snapshots
+        total_combinations = len(valid_combinations)
+        
         # Try each combination until solution found or time limit reached
         for combo_idx, target_inventory in enumerate(valid_combinations):
+            # Update current combination index for status snapshots
+            current_combination_idx = combo_idx
+            
             target_pieces = list(target_inventory.keys())
             # print(f"DLX DEBUG: Testing combination {combo_idx+1}/{len(valid_combinations)}: {target_inventory}")
             # print(f"DLX DEBUG: Starting candidate generation at {time.time() - start_time:.2f}s")
@@ -319,7 +407,14 @@ class DLXEngine(EngineProtocol):
             
             # Core Algorithm X search with bitmap optimization
             def search() -> Iterator[List[int]]:
-                nonlocal results
+                nonlocal results, nodes_explored, current_partial_solution
+                
+                # Update nodes explored and current partial solution for status snapshots
+                nodes_explored += 1
+                current_partial_solution = []
+                for row_id in solution_rows:
+                    if row_id in rows_meta:
+                        current_partial_solution.append(rows_meta[row_id])
                 
                 # Time check during recursive search
                 if time_limit > 0 and (time.time() - start_time) >= time_limit:
@@ -407,6 +502,9 @@ class DLXEngine(EngineProtocol):
                     continue
                 canonical_sigs.add(sig)
                 
+                # Increment solutions found for status snapshots
+                solutions_found += 1
+                
                 # DEBUG: Emitting solution with {len(placements)} placements
                 yield {
                     "type": "solution",
@@ -423,14 +521,18 @@ class DLXEngine(EngineProtocol):
             # Continue searching through all combinations until time limit reached
             # Don't break early - let time limit control termination
         
+        # Stop status emitter if running
+        if status_emitter:
+            status_emitter.stop()
+        
         # Emit done event
         yield {
             "type": "done",
             "metrics": {
-                "nodes": 0,
+                "nodes": nodes_explored,
                 "pruned": 0,
-                "depth": 0,
+                "depth": len(current_partial_solution),
                 "bestDepth": 0,
-                "solutions": results
+                "solutions": solutions_found
             }
         }

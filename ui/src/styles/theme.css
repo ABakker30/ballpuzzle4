@@ -1,0 +1,47 @@
+:root {
+  --bg: #0e0f11; --surface:#141618; --card:#16181b;
+  --text:#e8eaed; --muted:#a1a6ad; --border: rgba(255,255,255,.08);
+  --accent:#3ec6ff; --good:#3bd67f; --warn:#f6c34a; --bad:#ff6b6b;
+  --radius:14px; --shadow: 0 8px 30px rgba(0,0,0,.35);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Code panel */
+  --code-bg: #1a1d21;             /* lighter than card for contrast */
+  --code-fg: #e9edf3;             /* higher-contrast mono text */
+  --code-border: rgba(255,255,255,.14);
+  --code-head: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0));
+}
+
+/* Respect OS preference; easy to add manual toggle */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:#f7f7f8; --surface:#ffffff; --card:#ffffff; --text:#1d232a; --muted:#6b7280;
+    --border: rgba(0,0,0,.08); --accent:#0ea5e9;
+    --shadow: 0 8px 24px rgba(0,0,0,.08);
+    --code-bg: #f6f8fb;
+    --code-fg: #0f172a;
+    --code-border: rgba(0,0,0,.12);
+    --code-head: linear-gradient(180deg, rgba(0,0,0,.04), rgba(0,0,0,0));
+  }
+}
+
+/* Manual theme override */
+[data-theme="light"] {
+  --bg:#f7f7f8; --surface:#ffffff; --card:#ffffff; --text:#1d232a; --muted:#6b7280;
+  --border: rgba(0,0,0,.08); --accent:#0ea5e9;
+  --shadow: 0 8px 24px rgba(0,0,0,.08);
+  --code-bg: #f6f8fb;
+  --code-fg: #0f172a;
+  --code-border: rgba(0,0,0,.12);
+  --code-head: linear-gradient(180deg, rgba(0,0,0,.04), rgba(0,0,0,0));
+}
+
+[data-theme="dark"] {
+  --bg: #0e0f11; --surface:#141618; --card:#16181b;
+  --text:#e8eaed; --muted:#a1a6ad; --border: rgba(255,255,255,.08);
+  --accent:#3ec6ff; --good:#3bd67f; --warn:#f6c34a; --bad:#ff6b6b;
+  --shadow: 0 8px 30px rgba(0,0,0,.35);
+  --code-bg: #1a1d21;
+  --code-fg: #e9edf3;
+  --code-border: rgba(255,255,255,.14);
+  --code-head: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0));
+}

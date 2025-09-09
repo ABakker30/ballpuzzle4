@@ -85,6 +85,11 @@ def main():
     ap.add_argument("--support-bias", action="store_true", help="enable support-biased placement ordering")
     ap.add_argument("--hole4", action="store_true", help="enable hole4 detection pruning (disconnected void detection)")
     ap.add_argument("--piece-rotation-interval", type=float, default=5.0, help="seconds between piece rotation for diversified search (DFS engine only)")
+    # Status JSON emission
+    ap.add_argument("--status-json", type=str, default=None, help="Path to write periodic status snapshot JSON (includes placement stack).")
+    ap.add_argument("--status-interval-ms", type=int, default=1000, help="Interval for status emission in milliseconds (>=50).")
+    ap.add_argument("--status-max-stack", type=int, default=512, help="Safety cap for serialized stack length; emits stack_truncated=true if capped.")
+    ap.add_argument("--status-phase", type=str, default=None, help="Optional phase label to include in snapshot (init|search|verifying|done).")
     # NEW: inventory inputs
     ap.add_argument("--inventory", help="path to inventory JSON (with {\"pieces\":{...}})")
     ap.add_argument("--pieces", help="inline pieces, e.g. A=1,B=2 (takes precedence over --inventory)")
@@ -109,7 +114,7 @@ def main():
     meta = {"engine": engine.name, "seed": args.seed,
             "flags": {"mrvPieces": bool(args.mrv_pieces), "supportBias": bool(args.support_bias)}}
     # Build options bundle
-    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth), "maxRows": int(args.caps_max_rows)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms), "time_limit": int(args.time_limit) if args.time_limit > 0 else 0, "hole4": bool(args.hole4), "piece_rotation_interval": float(args.piece_rotation_interval)}
+    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth), "maxRows": int(args.caps_max_rows)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms), "time_limit": int(args.time_limit) if args.time_limit > 0 else 0, "hole4": bool(args.hole4), "piece_rotation_interval": float(args.piece_rotation_interval), "status_json": args.status_json, "status_interval_ms": int(args.status_interval_ms), "status_max_stack": int(args.status_max_stack), "status_phase": args.status_phase}
 
     emitted_solution = False
 

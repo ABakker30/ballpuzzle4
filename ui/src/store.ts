@@ -3,7 +3,7 @@ import { create } from "zustand";
 type Status = { ok: boolean | null; message: string };
 
 type State = {
-  tab: "home" | "viewer" | "dashboard";
+  tab: "home" | "viewer" | "dashboard" | "status" | "run" | "view";
   setTab: (t: State["tab"]) => void;
 
   containerStatus: Status;

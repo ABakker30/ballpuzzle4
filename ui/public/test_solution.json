@@ -1,0 +1,10 @@
+{
+  "sid": "test_solution_123",
+  "cid": "test_container_456",
+  "placements": [
+    {"piece": 0, "orient": 5, "i": 0, "j": 0, "k": 0},
+    {"piece": 4, "orient": 12, "i": 1, "j": 0, "k": 1},
+    {"piece": 19, "orient": 7, "i": 2, "j": 1, "k": 0},
+    {"piece": 7, "orient": 3, "i": 0, "j": 2, "k": 1}
+  ]
+}
