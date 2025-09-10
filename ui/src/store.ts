@@ -3,7 +3,7 @@ import { create } from "zustand";
 type Status = { ok: boolean | null; message: string };
 
 type State = {
-  tab: "home" | "viewer" | "dashboard" | "status" | "run" | "view";
+  tab: "shape" | "solve" | "view" | "status";
   setTab: (t: State["tab"]) => void;
 
   containerStatus: Status;
@@ -28,7 +28,7 @@ type State = {
 };
 
 export const useAppStore = create<State>((set) => ({
-  tab: "home",
+  tab: "shape",
   setTab: (t) => set({ tab: t }),
 
   containerStatus: { ok: null, message: "" },

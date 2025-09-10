@@ -4,11 +4,12 @@ import { Viewer3D } from "./components/Viewer3D";
 import StatusPanel from "./components/StatusPanel";
 import RunForm from "./components/RunForm";
 import ViewPage from "./pages/ViewPage";
+import { PuzzleShapePage } from "./pages/PuzzleShapePage";
 import { useAppStore } from "./store";
 import "./styles/theme.css";
 import "./styles.css";
 
-function TabButton({ id, label }: { id: "home" | "viewer" | "dashboard" | "status" | "run" | "view"; label: string }) {
+function TabButton({ id, label }: { id: "shape" | "solve" | "view" | "status"; label: string }) {
   const tab = useAppStore(s => s.tab);
   const setTab = useAppStore(s => s.setTab);
   const active = tab === id;
@@ -59,12 +60,10 @@ export default function App() {
       <header>
         <h1>Ballpuzzle UI</h1>
         <div className="tabs">
-          <TabButton id="home" label="Home" />
-          <TabButton id="viewer" label="Viewer (placeholder)" />
-          <TabButton id="dashboard" label="Dashboard (placeholder)" />
-          <TabButton id="status" label="Status" />
-          <TabButton id="run" label="Run" />
-          <TabButton id="view" label="View" />
+          <TabButton id="shape" label="Puzzle Shape" />
+          <TabButton id="solve" label="Solve Puzzle" />
+          <TabButton id="view" label="View Solution" />
+          <TabButton id="status" label="Status (Live)" />
         </div>
         <button 
           className="button" 
@@ -80,53 +79,13 @@ export default function App() {
       </header>
 
       <main>
-        {tab === "home" && (
-          <div className="grid">
-            <section className="card">
-              <h2>Container</h2>
-              <FilePicker kind="container" />
-              <Status {...containerStatus} />
-            </section>
-            <section className="card">
-              <h2>Solution</h2>
-              <FilePicker kind="solution" />
-              <Status {...solutionStatus} />
-            </section>
-            <section className="card">
-              <h2>Event Log</h2>
-              <FilePicker kind="events" />
-              <Status {...eventsStatus} />
-            </section>
-          </div>
-        )}
+        {tab === "shape" && <PuzzleShapePage />}
 
-        {tab === "viewer" && (
-          <div className="grid" style={{ gridTemplateColumns: "280px 1fr" }}>
-            <div>
-              <PlacementList />
-            </div>
-            <div className="card" style={{ padding:0 }}>
-              <Viewer3D />
-            </div>
-          </div>
-        )}
-
-        {tab === "dashboard" && (
-          <div className="placeholder">
-            <p>Dashboard placeholder. Next steps:</p>
-            <ul>
-              <li>Parse JSONL events, validate by schema</li>
-              <li>Plot nodes/pruned/depth vs time</li>
-              <li>Render <code>done</code> metrics</li>
-            </ul>
-          </div>
-        )}
-
-        {tab === "status" && <StatusPanel />}
-
-        {tab === "run" && <RunForm />}
+        {tab === "solve" && <RunForm />}
 
         {tab === "view" && <ViewPage />}
+
+        {tab === "status" && <StatusPanel />}
       </main>
     </div>
   );
