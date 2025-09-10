@@ -15,6 +15,7 @@ export interface ShapeToolbarProps {
   onSaveAsNew?: () => void;
   liveCID?: string;
   canSave?: boolean;
+  onClear?: () => void;
 }
 
 export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
@@ -29,7 +30,8 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
   onRedo,
   onSaveAsNew,
   liveCID = '',
-  canSave = true
+  canSave = true,
+  onClear
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -104,6 +106,13 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
           title={!canSave ? `Cell count must be divisible by 4 (current: ${cellCount})` : 'Save shape to file'}
         >
           Save Shape
+        </button>
+        <button 
+          className="button" 
+          onClick={onClear}
+          title="Clear all cells"
+        >
+          Clear
         </button>
       </div>
 

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { isStatusV1, type StatusSnapshotV1 } from "../types/status";
+import { useState, useEffect, useRef } from 'react';
+import { StatusData, isValidStatus } from '../types/status';
 
 const DEFAULT_URL = import.meta.env.VITE_STATUS_URL || "/.status/status.json";
 const DEFAULT_INTERVAL = Number(import.meta.env.VITE_STATUS_INTERVAL_MS || 1000);
 
 export function useStatus(url = DEFAULT_URL, intervalMs = DEFAULT_INTERVAL) {
-  const [data, setData] = useState<StatusSnapshotV1 | null>(null);
+  const [data, setData] = useState<StatusData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastOkAt, setLastOkAt] = useState<number | null>(null);
   const timer = useRef<number | null>(null);
@@ -17,10 +17,14 @@ export function useStatus(url = DEFAULT_URL, intervalMs = DEFAULT_INTERVAL) {
         const res = await fetch(`${url}?_=${Date.now()}`, { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
-        if (isStatusV1(json)) {
-          if (!aborted) { setData(json); setError(null); setLastOkAt(Date.now()); }
+        if (isValidStatus(json)) {
+          if (!aborted) {
+            setData(json);
+            setError(null);
+            setLastOkAt(Date.now());
+          }
         } else {
-          throw new Error("Invalid status shape");
+          throw new Error(`Invalid status format - expected v2. Got version: ${json?.version}`);
         }
       } catch (e:any) {
         if (!aborted) setError(e?.message || "Fetch error");

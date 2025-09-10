@@ -94,21 +94,35 @@ export const ThreeCanvas = forwardRef<ThreeCanvasRef, ThreeCanvasProps>(
       controls.enablePan = true;
       controlsRef.current = controls;
 
-      // Lighting setup
-      const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
+      // Lighting setup - comprehensive multi-directional lighting
+      const ambientLight = new THREE.AmbientLight(0x404040, 1.2);
       scene.add(ambientLight);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+      // Main directional light (key light)
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
       directionalLight.position.set(10, 10, 5);
       directionalLight.castShadow = true;
       directionalLight.shadow.mapSize.width = 2048;
       directionalLight.shadow.mapSize.height = 2048;
       scene.add(directionalLight);
 
-      // Add fill light for better visibility
-      const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
-      fillLight.position.set(-10, -10, -5);
-      scene.add(fillLight);
+      // Fill lights from multiple directions for even illumination
+      const fillLight1 = new THREE.DirectionalLight(0xffffff, 0.4);
+      fillLight1.position.set(-10, 5, -5);
+      scene.add(fillLight1);
+
+      const fillLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+      fillLight2.position.set(5, -10, 10);
+      scene.add(fillLight2);
+
+      const fillLight3 = new THREE.DirectionalLight(0xffffff, 0.3);
+      fillLight3.position.set(-5, 10, -10);
+      scene.add(fillLight3);
+
+      // Back light to illuminate rear surfaces
+      const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      backLight.position.set(-10, -10, -10);
+      scene.add(backLight);
 
       // Clock for animation
       const clock = new THREE.Clock();

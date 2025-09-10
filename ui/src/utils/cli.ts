@@ -27,6 +27,7 @@ export function buildSolveCLI(opts: {
     "--caps-max-nodes": opts.nodeLimit,
     "--max-results": opts.solutions,
     "--status-phase": opts.phase,
+    "--solution": "solutions/solution.json", // Default to solutions directory
   };
   const parts = [...base];
   for (const [k,v] of Object.entries(args)) {

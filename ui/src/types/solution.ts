@@ -8,13 +8,36 @@ export interface ContainerJson {
 }
 
 export interface Placement {
-  piece: number; orient: number; i:number; j:number; k:number;
+  piece: string; 
+  orientation?: number;
+  orient?: number; 
+  ori?: number;  // Actual field used in solution files
+  t?: number[];  // Translation/anchor point [i,j,k]
+  cells_ijk?: number[][]; // Full piece coordinates in engine format
+  anchor?: number[];
+  i?: number; 
+  j?: number; 
+  k?: number;
+  coordinates?: number[][];
 }
 
 export interface SolutionJson {
-  sid: string;
-  cid: string;
+  version?: number;
+  containerCidSha256?: string;
+  lattice?: string;
+  piecesUsed?: Record<string, number>;
   placements: Placement[];
+  sid?: string;
+  cid?: string;
+  sid_state_sha256?: string;
+  sid_route_sha256?: string;
+  sid_state_canon_sha256?: string;
+  mode?: string;
+  solver?: {
+    engine: string;
+    seed?: number;
+    flags?: Record<string, any>;
+  };
 }
 
 export type EventType =

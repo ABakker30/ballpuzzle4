@@ -82,13 +82,55 @@ pre.cmd { margin:0; white-space: pre-wrap; word-break: break-word; font-family: 
 
 @media (max-width: 900px){ .field{ grid-column: span 12; } }
 
-/* PR-2.3.1 Code panel styles */
+/* PR-2.3.1/* Status layout */
+.status-layout { 
+  display: grid; 
+  gap: 16px; 
+}
+
+@media (min-width: 1100px) {
+  .status-layout { 
+    grid-template-columns: 420px 1fr; 
+    align-items: start; 
+  }
+}
+
+/* 3D Viewer styles */
+.viewer-card { 
+  background: var(--card); 
+  border: 1px solid var(--border); 
+  border-radius: var(--radius); 
+  padding: 12px; 
+  box-shadow: var(--shadow); 
+}
+
+.viewer-head { 
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between; 
+  margin-bottom: 8px; 
+}
+
+.viewer-canvas { 
+  height: 440px; 
+  border-radius: 12px; 
+  overflow: hidden; 
+}
+
+.badge.note { 
+  font-size: .75rem; 
+  padding: 3px 8px; 
+  border-radius: 999px; 
+  border: 1px solid var(--border); 
+}
+
+/* Code panel styles */
 .code-panel {
-  border: 1px solid var(--code-border);
   background: var(--code-bg);
-  color: var(--code-fg);
-  border-radius: 12px;
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 
 .code-header {
@@ -145,4 +187,85 @@ pre.cmd {
 @media (max-width: 600px) {
   .code-header { flex-wrap: wrap; gap: 8px; }
   .code-actions { width: 100%; justify-content: flex-start; }
+}
+
+/* Puzzle Shape Page Styles */
+.puzzle-shape-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.shape-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.shape-header h1 {
+  margin: 0 0 16px 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.shape-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.stats-chips {
+  display: flex;
+  gap: 12px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 14px;
+}
+
+.chip-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.chip-value {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.shape-viewer {
+  flex: 1;
+  position: relative;
+  background: var(--bg);
+}
+
+@media (max-width: 768px) {
+  .shape-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+  
+  .toolbar-section {
+    justify-content: center;
+  }
+  
+  .stats-chips {
+    justify-content: center;
+  }
 }

@@ -14,7 +14,7 @@ from ...io.solution_sig import canonical_state_signature, extract_occupied_cells
 from ...solver.symbreak import container_symmetry_group
 from .engine_c.lattice_fcc import FCC_NEIGHBORS
 from .engine_c.bitset import popcount, bitset_from_indices, bitset_to_indices, bitset_intersects
-from ...common.status_snapshot import Snapshot, StackItem, ContainerInfo, now_ms
+from ...common.status_snapshot import Snapshot, StackItem, ContainerInfo, StatusV2, PlacedPiece, Cell, Metrics, now_ms, label_for_piece, expand_piece_to_cells
 from ...common.status_emitter import StatusEmitter
 import itertools
 
@@ -194,89 +194,85 @@ class DFSEngine(EngineProtocol):
         nodes_explored = 0
         max_depth_reached = 0
         max_pieces_placed = 0
+        # Initialize current placement stack for status snapshots
         current_placement_stack = []
+        next_instance_id = 1  # v2: stable instance IDs
         
         # Create piece name to index mapping for status snapshots
         piece_names = sorted(pieces_dict.keys())
         piece_name_to_idx = {name: idx for idx, name in enumerate(piece_names)}
         
-        # Status snapshot builder function
-        def build_snapshot() -> Snapshot:
+        # Status snapshot builder function (v2)
+        def build_snapshot() -> StatusV2:
             try:
-                with open("dfs_debug.log", "a") as f:
-                    f.write(f"DEBUG: build_snapshot called, stack length: {len(current_placement_stack)}\n")
+                # Convert placement stack to PlacedPiece format with instance IDs
+                placed_pieces = []
+                instance_id = 1
                 
-                # Convert placement stack to StackItem format
-                stack_items = []
                 for pl, _ in current_placement_stack:
-                    piece_idx = piece_name_to_idx.get(pl.piece, 0)
+                    piece_type = piece_name_to_idx.get(pl.piece, 0)
+                    piece_label = label_for_piece(piece_type)
+                    
                     # Use anchor cell (first coordinate) for position
                     anchor = pl.covered[0] if pl.covered else (0, 0, 0)
-                    stack_items.append(StackItem(
-                        piece=piece_idx,
-                        orient=pl.ori_idx,  # Use ori_idx instead of ori
-                        i=int(anchor[0]),
-                        j=int(anchor[1]),
-                        k=int(anchor[2])
+                    
+                    # Expand piece to all 4 cells
+                    cells = expand_piece_to_cells(piece_type, anchor[0], anchor[1], anchor[2])
+                    
+                    placed_pieces.append(PlacedPiece(
+                        instance_id=instance_id,
+                        piece_type=piece_type,
+                        piece_label=piece_label,
+                        cells=cells
                     ))
+                    instance_id += 1
                 
-                with open("dfs_debug.log", "a") as f:
-                    f.write(f"DEBUG: Created {len(stack_items)} stack items\n")
-                
-                # Apply stack truncation if needed
+                # Apply stack truncation if needed (truncate pieces, not cells)
                 truncated = False
-                if len(stack_items) > status_max_stack:
-                    stack_items = stack_items[-status_max_stack:]  # keep tail
+                if len(placed_pieces) > status_max_stack:
+                    placed_pieces = placed_pieces[-status_max_stack:]  # keep tail
                     truncated = True
                 
                 elapsed = now_ms() - start_time_ms
                 
-                snapshot = Snapshot(
-                    v=1,
-                    ts_ms=now_ms(),
-                    engine="dfs",
-                    run_id=run_id,
-                    container=ContainerInfo(cid=container_cid, cells=container_cells_count),
-                    k=None,  # DFS doesn't use k parameter
+                metrics = Metrics(
                     nodes=int(nodes_explored),
                     pruned=0,  # DFS doesn't track pruned separately
                     depth=int(len(current_placement_stack)),
-                    best_depth=int(max_depth_reached) if max_depth_reached > 0 else None,
                     solutions=int(solutions_found),
                     elapsed_ms=int(elapsed),
-                    stack=stack_items,
-                    stack_truncated=truncated,
-                    hash_container_cid=container_cid,
-                    hash_solution_sid=None,
-                    phase=status_phase
+                    best_depth=int(max_depth_reached) if max_depth_reached > 0 else None
                 )
                 
-                with open("dfs_debug.log", "a") as f:
-                    f.write(f"DEBUG: Snapshot created successfully\n")
+                snapshot = StatusV2(
+                    version=2,
+                    ts_ms=now_ms(),
+                    engine="dfs",
+                    phase=status_phase or "search",
+                    run_id=run_id,
+                    container=ContainerInfo(cid=container_cid, cells=container_cells_count),
+                    metrics=metrics,
+                    stack=placed_pieces,
+                    stack_truncated=truncated
+                )
+                
                 return snapshot
                 
             except Exception as e:
-                with open("dfs_debug.log", "a") as f:
-                    f.write(f"DEBUG: Error in build_snapshot: {e}\n")
-                # Return a minimal snapshot on error
-                return Snapshot(
-                    v=1,
+                # Return a minimal v2 snapshot on error
+                metrics = Metrics(
+                    nodes=0, pruned=0, depth=0, solutions=0, elapsed_ms=0
+                )
+                return StatusV2(
+                    version=2,
                     ts_ms=now_ms(),
                     engine="dfs",
+                    phase=status_phase or "search",
                     run_id=run_id,
                     container=ContainerInfo(cid=container_cid, cells=container_cells_count),
-                    k=None,
-                    nodes=0,
-                    pruned=0,
-                    depth=0,
-                    best_depth=None,
-                    solutions=0,
-                    elapsed_ms=0,
+                    metrics=metrics,
                     stack=[],
-                    stack_truncated=False,
-                    hash_container_cid=container_cid,
-                    hash_solution_sid=None,
-                    phase=status_phase
+                    stack_truncated=False
                 )
         
         # Initialize status emitter if requested
@@ -425,10 +421,7 @@ class DFSEngine(EngineProtocol):
             state.occupied_mask = 0
             
             def dfs(depth: int, placement_stack: List[Tuple[Placement, int]]) -> Iterator[SolveEvent]:
-                nonlocal solutions_found, nodes_explored, max_depth_reached, max_pieces_placed, current_placement_stack
-                
-                # Update shared placement stack for status snapshots
-                current_placement_stack = placement_stack.copy()
+                nonlocal solutions_found, nodes_explored, max_depth_reached, max_pieces_placed, current_placement_stack, next_instance_id
                 
                 # Time limit check
                 if time_limit > 0 and (time.time() - t0) >= time_limit:
@@ -546,6 +539,9 @@ class DFSEngine(EngineProtocol):
                     piece_mask = state.place_piece(pl)
                     placement_stack.append((pl, piece_mask))
                     
+                    # Update current placement stack for status snapshots
+                    current_placement_stack = placement_stack.copy()
+                    
                     # Recurse
                     for ev in dfs(depth + 1, placement_stack):
                         yield ev
@@ -556,6 +552,9 @@ class DFSEngine(EngineProtocol):
                     placement_stack.pop()
                     state.remove_piece(piece_mask)
                     combo_bag.return_piece(pl.piece)
+                    
+                    # Update current placement stack for status snapshots
+                    current_placement_stack = placement_stack.copy()
             
             # Start search for this combination
             for ev in dfs(0, []):

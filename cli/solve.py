@@ -1,5 +1,6 @@
 import argparse, time, json, sys
 from pathlib import Path
+import os
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -71,7 +72,7 @@ def main():
     ap.add_argument("container", help="path to FCC container json")
     ap.add_argument("--engine", choices=["dfs", "dlx"], default="dfs", help="solver engine")
     ap.add_argument("--eventlog", default="events.jsonl")
-    ap.add_argument("--solution", default="solution.json")
+    ap.add_argument("--solution", default="solutions/solution.json")
     ap.add_argument("--seed", type=int, default=9000)
     ap.add_argument("--max-results", default="1")
     # NEW: simple caps option (nodes limit)
@@ -95,6 +96,10 @@ def main():
     ap.add_argument("--pieces", help="inline pieces, e.g. A=1,B=2 (takes precedence over --inventory)")
     args = ap.parse_args()
 
+    # Ensure solutions directory exists
+    solution_path = Path(args.solution)
+    solution_path.parent.mkdir(parents=True, exist_ok=True)
+
     container = load_container(args.container)
 
     # Resolve inventory
@@ -117,6 +122,7 @@ def main():
     options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth), "maxRows": int(args.caps_max_rows)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms), "time_limit": int(args.time_limit) if args.time_limit > 0 else 0, "hole4": bool(args.hole4), "piece_rotation_interval": float(args.piece_rotation_interval), "status_json": args.status_json, "status_interval_ms": int(args.status_interval_ms), "status_max_stack": int(args.status_max_stack), "status_phase": args.status_phase}
 
     emitted_solution = False
+    solution_count = 0
 
     # Schema validation setup
     from src.io.schema import load_schema
@@ -139,7 +145,21 @@ def main():
                 sol = dict(ev["solution"])
                 if "piecesUsed" not in sol:
                     sol["piecesUsed"] = pieces_used
-                write_solution(args.solution, sol, meta, pieces_used)
+                
+                # Generate unique filename for multiple solutions
+                solution_count += 1
+                if int(args.max_results) > 1:
+                    # For multiple solutions, append number to filename
+                    solution_path = Path(args.solution)
+                    base_name = solution_path.stem
+                    extension = solution_path.suffix
+                    numbered_filename = f"{base_name}_{solution_count:03d}{extension}"
+                    numbered_path = solution_path.parent / numbered_filename
+                    write_solution(str(numbered_path), sol, meta, pieces_used)
+                else:
+                    # Single solution, use original filename
+                    write_solution(args.solution, sol, meta, pieces_used)
+                
                 emitted_solution = True
 
         # If the engine emitted no 'solution' event, write a stub to avoid missing file

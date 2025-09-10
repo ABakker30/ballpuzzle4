@@ -4,6 +4,7 @@ import { Viewer3D } from "./components/Viewer3D";
 import StatusPanel from "./components/StatusPanel";
 import RunForm from "./components/RunForm";
 import ViewPage from "./pages/ViewPage";
+import { ViewSolutionPage } from "./pages/ViewSolutionPage";
 import { PuzzleShapePage } from "./pages/PuzzleShapePage";
 import { useAppStore } from "./store";
 import "./styles/theme.css";
@@ -83,7 +84,7 @@ export default function App() {
 
         {tab === "solve" && <RunForm />}
 
-        {tab === "view" && <ViewPage />}
+        {tab === "view" && <ViewSolutionPage />}
 
         {tab === "status" && <StatusPanel />}
       </main>

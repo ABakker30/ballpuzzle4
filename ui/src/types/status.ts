@@ -1,23 +1,44 @@
 export type EngineName = "dfs" | "dlx" | "c" | string;
 
-export interface StackItem { piece:number; orient:number; i:number; j:number; k:number; }
-export interface ContainerInfo { cid:string; cells:number; }
-
-export interface StatusSnapshotV1 {
-  v: number; ts_ms: number; engine: EngineName; run_id: string;
-  container: ContainerInfo; k?: number | null;
-  nodes: number; pruned: number; depth: number; best_depth?: number | null;
-  solutions: number; elapsed_ms: number; stack: StackItem[];
-  stack_truncated?: boolean; hash_container_cid?: string | null; hash_solution_sid?: string | null;
-  phase?: string | null;
+export interface Cell {
+  i: number;
+  j: number;
+  k: number;
 }
 
-export function isStatusV1(x:any): x is StatusSnapshotV1 {
-  return !!x && x.v === 1 &&
-    Number.isInteger(x.ts_ms) &&
-    typeof x.engine === "string" &&
-    x.container && typeof x.container.cid === "string" && Number.isInteger(x.container.cells) &&
-    Number.isInteger(x.nodes) && Number.isInteger(x.pruned) &&
-    Number.isInteger(x.depth) && Number.isInteger(x.solutions) && Number.isInteger(x.elapsed_ms) &&
-    Array.isArray(x.stack);
+export interface PlacedPiece {
+  instance_id: number;
+  piece_type: number;
+  piece_label: string; // e.g., "A"
+  cells: Cell[];       // container FCC
+}
+
+export interface Metrics {
+  nodes: number;
+  pruned: number;
+  depth: number;
+  solutions: number;
+  elapsed_ms: number;
+  best_depth?: number;
+}
+
+export interface ContainerInfo {
+  cid: string;
+  cells: number;
+}
+
+export interface StatusData {
+  version: 2;
+  ts_ms: number;
+  engine: string;
+  phase: string;      // init|search|verifying|done
+  run_id: string;
+  container: ContainerInfo;
+  metrics: Metrics;
+  stack_truncated: boolean;
+  stack: PlacedPiece[];
+}
+
+export function isValidStatus(x: any): x is StatusData {
+  return !!x && x.version === 2 && x.container && Array.isArray(x.stack);
 }

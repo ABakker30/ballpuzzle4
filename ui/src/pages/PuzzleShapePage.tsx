@@ -263,6 +263,18 @@ export const PuzzleShapePage: React.FC = () => {
   }, [redoStack]);
 
   // Save as new handler
+  const handleClear = useCallback(() => {
+    // Clear all cell data
+    setWorldCells(new Set());
+    setWorldPositions([]);
+    setWorldCellPositions([]);
+    setUndoStack([]);
+    setRedoStack([]);
+    setLiveCID('');
+    
+    console.log('Cleared all cells');
+  }, []);
+
   const handleSaveAsNew = useCallback(async () => {
     if (worldCells.size === 0) return;
     
@@ -338,16 +350,13 @@ export const PuzzleShapePage: React.FC = () => {
       <div className="shape-header">
         <h1>Puzzle Shape</h1>
         <ShapeToolbar
+          containerName={containerName}
+          cellCount={cellCount}
           onLoadContainer={handleLoadContainer}
           onFitView={handleFitView}
           onResetView={handleResetView}
-          cellCount={cellCount}
-          containerName={containerName}
-          canUndo={undoStack.length > 0}
-          canRedo={redoStack.length > 0}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
           onSaveAsNew={handleSaveAsNew}
+          onClear={handleClear}
           liveCID={liveCID}
           canSave={cellCount % 4 === 0}
         />

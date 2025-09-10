@@ -125,22 +125,22 @@ export default function RunForm() {
         </div>
 
         <div className="field full">
-          <label><strong>Container</strong></label>
+          <label htmlFor="container-path"><strong>Container</strong></label>
           <div style={{display:"flex", gap:8}}>
-            <input className="input" value={container} onChange={e=>setContainer(e.target.value)} placeholder="path to container json" style={{flex:1}} />
+            <input id="container-path" name="container" className="input" value={container} onChange={e=>setContainer(e.target.value)} placeholder="path to container json" style={{flex:1}} />
             <ContainerPathPicker value={container} onChange={setContainer} />
           </div>
           <div className="help">Pick a JSON or type a repo path (e.g. <code>data/containers/samples/Shape_1.json</code>).</div>
         </div>
 
         <div className="field">
-          <label><strong>Solutions</strong></label>
-          <input className="input" type="number" value={solutions ?? ""} onChange={e=>setSolutions(e.target.value ? Number(e.target.value) : undefined)} />
+          <label htmlFor="solutions"><strong>Solutions</strong></label>
+          <input id="solutions" name="solutions" className="input" type="number" value={solutions ?? ""} onChange={e=>setSolutions(e.target.value ? Number(e.target.value) : undefined)} />
         </div>
 
         <div className="field">
-          <label><strong>Time limit (s)</strong></label>
-          <input className="input" type="number" value={timeLimit ?? ""} onChange={e=>setTimeLimit(e.target.value ? Number(e.target.value) : undefined)} />
+          <label htmlFor="time-limit"><strong>Time limit (s)</strong></label>
+          <input id="time-limit" name="timeLimit" className="input" type="number" value={timeLimit ?? ""} onChange={e=>setTimeLimit(e.target.value ? Number(e.target.value) : undefined)} />
           <div className="help">Stop after this many seconds.</div>
         </div>
 
@@ -159,35 +159,35 @@ export default function RunForm() {
         <summary>Advanced options</summary>
         <div className="form-grid" style={{marginTop:12}}>
           <div className="field">
-            <label><strong>Interval (ms)</strong></label>
-            <input className="input" type="number" value={interval} onChange={e=>setInterval(Number(e.target.value)||1000)} />
+            <label htmlFor="interval"><strong>Interval (ms)</strong></label>
+            <input id="interval" name="interval" className="input" type="number" value={interval} onChange={e=>setInterval(Number(e.target.value)||1000)} />
             <div className="help">Status update frequency.</div>
           </div>
 
           <div className="field">
-            <label><strong>Stack cap</strong></label>
-            <input className="input" type="number" value={stackCap} onChange={e=>setStackCap(Number(e.target.value)||512)} />
+            <label htmlFor="stack-cap"><strong>Stack cap</strong></label>
+            <input id="stack-cap" name="stackCap" className="input" type="number" value={stackCap} onChange={e=>setStackCap(Number(e.target.value)||512)} />
             <div className="help">Max stack depth to track.</div>
           </div>
 
           <div className="field">
-            <label><strong>Node limit</strong></label>
-            <input className="input" type="number" value={nodeLimit ?? ""} onChange={e=>setNodeLimit(e.target.value ? Number(e.target.value) : undefined)} />
+            <label htmlFor="node-limit"><strong>Node limit</strong></label>
+            <input id="node-limit" name="nodeLimit" className="input" type="number" value={nodeLimit ?? ""} onChange={e=>setNodeLimit(e.target.value ? Number(e.target.value) : undefined)} />
           </div>
 
           <div className="field">
-            <label><strong>K</strong></label>
-            <input className="input" type="number" value={k ?? ""} onChange={e=>setK(e.target.value ? Number(e.target.value) : undefined)} />
+            <label htmlFor="k-value"><strong>K</strong></label>
+            <input id="k-value" name="k" className="input" type="number" value={k ?? ""} onChange={e=>setK(e.target.value ? Number(e.target.value) : undefined)} />
           </div>
 
           <div className="field">
-            <label><strong>Phase</strong></label>
-            <input className="input" value={phase} onChange={e=>setPhase(e.target.value)} />
+            <label htmlFor="phase"><strong>Phase</strong></label>
+            <input id="phase" name="phase" className="input" value={phase} onChange={e=>setPhase(e.target.value)} />
           </div>
 
           <div className="field">
-            <label><strong>Run ID</strong></label>
-            <input className="input" value={runId} onChange={e=>setRunId(e.target.value)} placeholder="auto" />
+            <label htmlFor="run-id"><strong>Run ID</strong></label>
+            <input id="run-id" name="runId" className="input" value={runId} onChange={e=>setRunId(e.target.value)} placeholder="auto" />
           </div>
         </div>
       </details>
