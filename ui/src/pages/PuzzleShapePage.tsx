@@ -349,7 +349,7 @@ export const PuzzleShapePage: React.FC = () => {
       cid,
       cells: engineCells.length,
       lattice: 'fcc',
-      coords: engineCells
+      coordinates: engineCells.map(cell => [cell.i, cell.j, cell.k])
     };
     
     const jsonContent = JSON.stringify(containerData, null, 2);

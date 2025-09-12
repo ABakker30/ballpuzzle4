@@ -37,18 +37,24 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
         const content = e.target?.result as string;
         const container = JSON.parse(content) as ContainerJson;
         
-        // Basic validation - check for coordinates field
+        // Validate coordinates field
         const coords = container.coordinates || [];
         if (!Array.isArray(coords)) {
           throw new Error('Invalid container format: coordinates must be an array');
         }
         
-        // Validate coordinate format
+        // Validate coordinate format - must be arrays of [i,j,k]
         if (coords.length > 0 && !Array.isArray(coords[0])) {
           throw new Error('Invalid container format: coordinates must be arrays of [i,j,k]');
         }
         
-        // Normalize the container format
+        // Validate each coordinate triplet
+        coords.forEach((coord, index) => {
+          if (!Array.isArray(coord) || coord.length !== 3 || !coord.every(n => typeof n === 'number')) {
+            throw new Error(`Invalid coordinate at index ${index}: must be [i,j,k] number array`);
+          }
+        });
+        
         const normalizedContainer = {
           ...container,
           coordinates: coords

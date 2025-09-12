@@ -19,6 +19,5 @@ export interface ContainerJson {
   cells?: number;
   lattice?: string;
   lattice_type?: string;
-  coordinates?: number[][]; // Array of [i, j, k] triplets (for loading)
-  coords?: EngineCell[]; // Engine cells (for saving)
+  coordinates?: number[][]; // Array of [i, j, k] triplets
 }
