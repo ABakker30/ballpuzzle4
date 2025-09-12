@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ThreeCanvas, ThreeCanvasRef } from '../3d/ThreeCanvas';
 import { InstancedSpheres } from '../3d/InstancedSpheres';
-import { engineToWorldInt } from '../../lib/lattice';
+import { InstancedBonds } from '../3d/InstancedBonds';
+import { engineToWorldInt, worldToEngineInt, getDirectNeighbors, keyW } from '../../lib/lattice';
 import { SolutionJson, Placement } from '../../types/solution';
 import * as THREE from 'three';
 
@@ -62,6 +63,12 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
 }) => {
   const canvasRef = useRef<ThreeCanvasRef>(null);
   const [sphereGroups, setSphereGroups] = useState<Array<{
+    positions: Float32Array;
+    colors: Float32Array;
+    piece: string;
+    radius: number;
+  }>>([]);
+  const [bondGroups, setBondGroups] = useState<Array<{
     positions: Float32Array;
     colors: Float32Array;
     piece: string;
@@ -163,7 +170,46 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
       }
     }
     
-    // Convert to sphere groups
+    // Helper function to find adjacent cells within the same piece
+    const findAdjacentCells = (cells: Array<{ x: number; y: number; z: number }>) => {
+      const bonds: Array<{ start: { x: number; y: number; z: number }, end: { x: number; y: number; z: number } }> = [];
+      
+      // Create a set of existing cell positions for fast lookup
+      const cellSet = new Set<string>();
+      cells.forEach(cell => {
+        cellSet.add(keyW(cell.x, cell.y, cell.z));
+      });
+      
+      // For each cell, check all its FCC neighbors
+      cells.forEach(cell => {
+        const worldCell = { X: cell.x, Y: cell.y, Z: cell.z };
+        const neighbors = getDirectNeighbors(worldCell);
+        
+        neighbors.forEach(neighbor => {
+          const neighborKey = keyW(neighbor.X, neighbor.Y, neighbor.Z);
+          
+          // If this neighbor exists in our piece, create a bond
+          if (cellSet.has(neighborKey)) {
+            // Find the neighbor cell object
+            const neighborCell = cells.find(c => 
+              c.x === neighbor.X && c.y === neighbor.Y && c.z === neighbor.Z
+            );
+            
+            if (neighborCell) {
+              // Avoid duplicate bonds by only adding if current cell comes before neighbor
+              const currentKey = keyW(cell.x, cell.y, cell.z);
+              if (currentKey < neighborKey) {
+                bonds.push({ start: cell, end: neighborCell });
+              }
+            }
+          }
+        });
+      });
+      
+      return bonds;
+    };
+
+    // Convert to sphere groups and bond groups
     console.log('SolutionViewer3D: Final piece groups:', pieceGroups);
     const groups = Object.entries(pieceGroups).map(([piece, cells]) => {
       console.log('SolutionViewer3D: Creating sphere group for piece', piece, 'with', cells.length, 'spheres');
@@ -188,6 +234,39 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
       // Debug: log the actual RGB values being set
       console.log(`SolutionViewer3D: Piece ${piece} RGB values:`, [color.r, color.g, color.b]);
       return { positions, colors, piece };
+    });
+    
+    // Create bond groups for each piece
+    const bonds = Object.entries(pieceGroups).map(([piece, cells]) => {
+      const adjacentBonds = findAdjacentCells(cells);
+      console.log(`SolutionViewer3D: Found ${adjacentBonds.length} bonds for piece ${piece}`);
+      
+      if (adjacentBonds.length === 0) {
+        return { positions: new Float32Array(0), colors: new Float32Array(0), piece };
+      }
+      
+      const bondPositions = new Float32Array(adjacentBonds.length * 6); // 2 points per bond
+      const bondColors = new Float32Array(adjacentBonds.length * 3); // 1 color per bond
+      
+      const hexColor = PIECE_COLORS[piece] || '#888888';
+      const color = new THREE.Color(hexColor);
+      
+      adjacentBonds.forEach((bond, i) => {
+        // Store start and end positions for each bond
+        bondPositions[i * 6] = bond.start.x;
+        bondPositions[i * 6 + 1] = bond.start.y;
+        bondPositions[i * 6 + 2] = bond.start.z;
+        bondPositions[i * 6 + 3] = bond.end.x;
+        bondPositions[i * 6 + 4] = bond.end.y;
+        bondPositions[i * 6 + 5] = bond.end.z;
+        
+        // Store color for each bond
+        bondColors[i * 3] = color.r;
+        bondColors[i * 3 + 1] = color.g;
+        bondColors[i * 3 + 2] = color.b;
+      });
+      
+      return { positions: bondPositions, colors: bondColors, piece };
     });
     
     // Calculate optimal sphere radius based on minimum distance between world cells
@@ -220,9 +299,12 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
 
     // Add radius to all groups
     const groupsWithRadius = groups.map(group => ({ ...group, radius: optimalRadius }));
+    const bondsWithRadius = bonds.map(group => ({ ...group, radius: optimalRadius }));
     
     console.log('SolutionViewer3D: Setting sphere groups:', groupsWithRadius);
+    console.log('SolutionViewer3D: Setting bond groups:', bondsWithRadius);
     setSphereGroups(groupsWithRadius);
+    setBondGroups(bondsWithRadius);
   }, [solution, maxPlacements]);
 
   // Separate effect for initial camera positioning - only runs when solution changes
@@ -266,7 +348,16 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
       <ThreeCanvas ref={canvasRef} onReady={handleThreeReady}>
         {scene && sphereGroups.map((group, index) => (
           <InstancedSpheres
-            key={`${group.piece}-${index}`}
+            key={`spheres-${group.piece}-${index}`}
+            positions={group.positions}
+            colors={group.colors}
+            radius={group.radius || 0.3}
+            scene={scene}
+          />
+        ))}
+        {scene && bondGroups.map((group, index) => (
+          <InstancedBonds
+            key={`bonds-${group.piece}-${index}`}
             positions={group.positions}
             colors={group.colors}
             radius={group.radius || 0.3}

@@ -21,7 +21,7 @@ export const PuzzleShapePage: React.FC = () => {
   const [undoStack, setUndoStack] = useState<Array<{type: 'add' | 'remove', cell: WorldCell}>>([]);
   const [redoStack, setRedoStack] = useState<Array<{type: 'add' | 'remove', cell: WorldCell}>>([]);
   const [liveCID, setLiveCID] = useState<string>('');
-  const [brightness, setBrightness] = useState<number>(1.0);
+  const [brightness] = useState<number>(4.0);
   const canvasRef = useRef<ThreeCanvasRef>(null);
 
   const handleLoadContainer = useCallback((newContainer: ContainerJson) => {
@@ -407,8 +407,6 @@ export const PuzzleShapePage: React.FC = () => {
           onClear={handleClear}
           liveCID={liveCID}
           canSave={cellCount % 4 === 0}
-          brightness={brightness}
-          onBrightnessChange={setBrightness}
         />
       </div>
       

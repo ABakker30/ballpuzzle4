@@ -12,8 +12,6 @@ export interface ShapeToolbarProps {
   onClear: () => void;
   liveCID: string;
   canSave: boolean;
-  brightness: number;
-  onBrightnessChange: (brightness: number) => void;
 }
 
 export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
@@ -25,9 +23,7 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
   onSaveAsNew,
   liveCID = '',
   canSave = true,
-  onClear,
-  brightness,
-  onBrightnessChange
+  onClear
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -112,23 +108,6 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
         </button>
       </div>
 
-      <div className="toolbar-section">
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          Brightness:
-          <input
-            type="range"
-            min="0.1"
-            max="5.0"
-            step="0.1"
-            value={brightness}
-            onChange={(e) => onBrightnessChange(parseFloat(e.target.value))}
-            style={{ width: '120px' }}
-          />
-          <span style={{ minWidth: '40px', fontSize: '14px' }}>
-            {brightness.toFixed(1)}x
-          </span>
-        </label>
-      </div>
 
       <div className="toolbar-section">
         <div className="stats-chips">
