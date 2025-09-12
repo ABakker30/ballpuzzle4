@@ -31,8 +31,10 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
   const [hoveredCell, setHoveredCell] = useState<WorldCell | null>(null);
   const [willAdd, setWillAdd] = useState<boolean>(false);
+  const [isCameraMoving, setIsCameraMoving] = useState<boolean>(false);
   const cellIndexMapRef = useRef<Map<number, WorldCell>>(new Map());
   const validNeighborsRef = useRef<WorldCell[]>([]);
+  const debounceTimeoutRef = useRef<number | null>(null);
 
   // Convert cells to positions and build index map
   const positions = React.useMemo(() => {
@@ -63,6 +65,7 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     if (!scene || !camera) return;
     
     console.log('=== MOUSE MOVE HANDLER CALLED ===');
+    console.log('isCameraMoving:', isCameraMoving);
 
     const canvas = event.target as HTMLCanvasElement;
     const rect = canvas.getBoundingClientRect();
@@ -137,19 +140,44 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       isAddOperation = !cellExists;
     }
 
+    // Reset all sphere colors to blue first
+    if (meshRef.current && meshRef.current.instanceColor) {
+      const blueColor = new THREE.Color(0x4da6ff);
+      const colors = meshRef.current.instanceColor.array as Float32Array;
+      for (let i = 0; i < cells.length; i++) {
+        colors[i * 3] = blueColor.r;     // Red component
+        colors[i * 3 + 1] = blueColor.g; // Green component
+        colors[i * 3 + 2] = blueColor.b; // Blue component
+      }
+      meshRef.current.instanceColor.needsUpdate = true;
+    }
+
     // Update hover state and highlight
+    console.log('Processing targetCell:', targetCell, 'isCameraMoving:', isCameraMoving);
     if (targetCell) {
       setHoveredCell(targetCell);
       setWillAdd(isAddOperation);
       onHover?.(targetCell);
       
-      if (highlightMeshRef.current) {
-        highlightMeshRef.current.position.set(targetCell.X * scale, targetCell.Y * scale, targetCell.Z * scale);
-        const material = highlightMeshRef.current.material as THREE.MeshStandardMaterial;
-        material.color.setHex(isAddOperation ? 0x00ff00 : 0xff0000); // Green for add, red for remove
-        highlightMeshRef.current.visible = true;
+      if (isAddOperation) {
+        // Show green highlight for add operation
+        if (highlightMeshRef.current) {
+          highlightMeshRef.current.position.set(targetCell.X * scale, targetCell.Y * scale, targetCell.Z * scale);
+          const material = highlightMeshRef.current.material as THREE.MeshStandardMaterial;
+          material.color.setHex(0x00ff00); // Green for add
+          highlightMeshRef.current.visible = true;
+        }
+      } else {
+        // For delete operation, show red highlight at the same position as the sphere
+        if (highlightMeshRef.current) {
+          highlightMeshRef.current.position.set(targetCell.X * scale, targetCell.Y * scale, targetCell.Z * scale);
+          const material = highlightMeshRef.current.material as THREE.MeshStandardMaterial;
+          material.color.setHex(0xff0000); // Red for delete
+          highlightMeshRef.current.visible = true;
+        }
       }
-    } else if (hoveredCell) {
+    } else {
+      // Clear hover state when not hovering
       setHoveredCell(null);
       setWillAdd(false);
       onHover?.(null);
@@ -202,7 +230,7 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       const distance = neighborWorldPos.distanceTo(mousePos);
       console.log(`Neighbor ${neighbor.X},${neighbor.Y},${neighbor.Z}: distance = ${distance.toFixed(3)}, threshold = 1.5`);
     }
-  }, [scene, camera, hoveredCell, onHover, scale, cells]);
+  }, [scene, camera, hoveredCell, onHover, scale, cells, isCameraMoving]);
 
   // Check if a neighbor position is facing the camera (visible from current viewpoint)
   const isNeighborFacingCamera = useCallback((neighbor: WorldCell, existingCells: WorldCell[], camera: THREE.PerspectiveCamera | null): boolean => {
@@ -211,20 +239,42 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
   }, [scale]);
 
   const handleClick = useCallback((event: MouseEvent) => {
-    if (!hoveredCell) return;
+    console.log('=== CLICK HANDLER CALLED ===');
+    console.log('hoveredCell:', hoveredCell);
+    console.log('isCameraMoving:', isCameraMoving);
+    console.log('onAdd function:', onAdd);
+    console.log('onRemove function:', onRemove);
+    
+    if (!hoveredCell) {
+      console.log('Click ignored: no hovered cell');
+      return;
+    }
+    
+    if (isCameraMoving) {
+      console.log('Click ignored: camera is moving');
+      return;
+    }
 
     // Auto-detect operation based on whether cell exists
     const cellExists = cells.some(cell => keyW(cell.X, cell.Y, cell.Z) === keyW(hoveredCell.X, hoveredCell.Y, hoveredCell.Z));
+    console.log('Cell exists:', cellExists);
 
     if (cellExists) {
       // Cell exists, remove it
+      console.log('Calling onRemove with:', hoveredCell);
       onRemove?.(hoveredCell);
     } else if (isValidWorldCell(hoveredCell.X, hoveredCell.Y, hoveredCell.Z) && 
                (cells.length === 0 || isAdjacentToExistingCells(hoveredCell, cells))) {
       // Cell doesn't exist, is valid FCC, and is adjacent to existing cells (or first cell)
+      console.log('Calling onAdd with:', hoveredCell);
       onAdd?.(hoveredCell);
+    } else {
+      console.log('Add operation blocked - invalid cell or not adjacent');
+      console.log('isValidWorldCell:', isValidWorldCell(hoveredCell.X, hoveredCell.Y, hoveredCell.Z));
+      console.log('cells.length:', cells.length);
+      console.log('isAdjacentToExistingCells:', cells.length > 0 ? isAdjacentToExistingCells(hoveredCell, cells) : 'N/A (first cell)');
     }
-  }, [hoveredCell, cells, onAdd, onRemove]);
+  }, [hoveredCell, cells, onAdd, onRemove, isCameraMoving]);
 
   // Set up instanced mesh and highlight
   useEffect(() => {
@@ -241,13 +291,15 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       scene.remove(highlightMeshRef.current);
     }
     
-    const highlightGeometry = new THREE.SphereGeometry(radius * 1.2, 16, 12);
+    const highlightGeometry = new THREE.SphereGeometry(radius * 1.05, 32, 24);
     const highlightMaterial = new THREE.MeshStandardMaterial({
       color: 0x00ff00, // Default to green for adding
-      metalness: 0.0,
-      roughness: 0.3,
-      transparent: true,
-      opacity: 0.6,
+      metalness: 0.3,
+      roughness: 0.4,
+      emissive: 0x111111,
+      emissiveIntensity: 0.1,
+      transparent: false,
+      opacity: 1.0,
     });
     
     const highlightMesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
@@ -261,11 +313,13 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     }
 
     // Create geometry and material for existing cells
-    const geometry = new THREE.SphereGeometry(radius, 16, 12);
+    const geometry = new THREE.SphereGeometry(radius, 32, 24);
     const material = new THREE.MeshStandardMaterial({
-      color: 0x00a0db, // R0, G160, B219
-      metalness: 0.1,
+      color: 0x4da6ff, // Lighter, brighter blue color for shape spheres
+      metalness: 0.3,
       roughness: 0.4,
+      emissive: 0x111111,
+      emissiveIntensity: 0.1,
     });
 
     // Create new instanced mesh
@@ -273,6 +327,16 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     meshRef.current = mesh;
+
+    // Initialize instance colors (all blue by default)
+    const blueColor = new THREE.Color(0x4da6ff);
+    const colors = new Float32Array(cells.length * 3);
+    for (let i = 0; i < cells.length; i++) {
+      colors[i * 3] = blueColor.r;
+      colors[i * 3 + 1] = blueColor.g;
+      colors[i * 3 + 2] = blueColor.b;
+    }
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(colors, 3);
 
     // Update instance matrices
     const matrix = new THREE.Matrix4();
@@ -282,6 +346,9 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       mesh.setMatrixAt(i, matrix);
     }
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
 
     scene.add(mesh);
 
@@ -300,6 +367,55 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     };
   }, [scene, cells, radius, scale]);
 
+  // Camera movement detection handlers
+  const handleMouseDown = useCallback((event: MouseEvent) => {
+    console.log('=== MOUSE DOWN ===', 'button:', event.button);
+    // Only track camera movement for right mouse button (orbit) and middle mouse button (pan)
+    // Left mouse button (0) should be reserved for sphere clicking
+    if (event.button === 1 || event.button === 2) {
+      console.log('Setting camera moving to TRUE');
+      setIsCameraMoving(true);
+      
+      // Clear any existing debounce timeout
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+        debounceTimeoutRef.current = null;
+      }
+    }
+  }, []);
+
+  const handleMouseUp = useCallback((event: MouseEvent) => {
+    console.log('=== MOUSE UP ===', 'button:', event.button);
+    if (event.button === 1 || event.button === 2) {
+      console.log('Starting debounce timer to set camera moving to FALSE');
+      // Debounce the re-enable of interactions
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+      
+      debounceTimeoutRef.current = window.setTimeout(() => {
+        console.log('Debounce timer fired - setting camera moving to FALSE');
+        setIsCameraMoving(false);
+        debounceTimeoutRef.current = null;
+      }, 300); // Increased to 300ms debounce for better stability
+    }
+  }, []);
+
+  // Additional camera movement detection via wheel events
+  const handleWheel = useCallback((event: WheelEvent) => {
+    setIsCameraMoving(true);
+    
+    // Clear any existing debounce timeout
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+    
+    debounceTimeoutRef.current = window.setTimeout(() => {
+      setIsCameraMoving(false);
+      debounceTimeoutRef.current = null;
+    }, 300); // 300ms debounce after wheel stops
+  }, []);
+
   // Set up mouse event listeners
   useEffect(() => {
     if (!scene) return;
@@ -309,12 +425,24 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
 
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('click', handleClick);
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('wheel', handleWheel);
 
     return () => {
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('click', handleClick);
+      canvas.removeEventListener('mousedown', handleMouseDown);
+      canvas.removeEventListener('mouseup', handleMouseUp);
+      canvas.removeEventListener('wheel', handleWheel);
+      
+      // Clean up debounce timeout
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+        debounceTimeoutRef.current = null;
+      }
     };
-  }, [handleMouseMove, handleClick, scene]);
+  }, [handleMouseMove, handleClick, handleMouseDown, handleMouseUp, handleWheel, scene]);
 
   return null; // This component manages Three.js objects directly
 };

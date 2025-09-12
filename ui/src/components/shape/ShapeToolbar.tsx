@@ -3,19 +3,17 @@ import { ContainerJson, EngineCell } from '../../types/shape';
 import { engineToWorldInt } from '../../lib/lattice';
 
 export interface ShapeToolbarProps {
+  containerName: string;
+  cellCount: number;
   onLoadContainer: (container: ContainerJson) => void;
   onFitView: () => void;
   onResetView: () => void;
-  cellCount?: number;
-  containerName?: string;
-  canUndo?: boolean;
-  canRedo?: boolean;
-  onUndo?: () => void;
-  onRedo?: () => void;
-  onSaveAsNew?: () => void;
-  liveCID?: string;
-  canSave?: boolean;
-  onClear?: () => void;
+  onSaveAsNew: () => void;
+  onClear: () => void;
+  liveCID: string;
+  canSave: boolean;
+  brightness: number;
+  onBrightnessChange: (brightness: number) => void;
 }
 
 export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
@@ -24,14 +22,12 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
   onResetView,
   cellCount = 0,
   containerName = 'No container loaded',
-  canUndo = false,
-  canRedo = false,
-  onUndo,
-  onRedo,
   onSaveAsNew,
   liveCID = '',
   canSave = true,
-  onClear
+  onClear,
+  brightness,
+  onBrightnessChange
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -114,6 +110,24 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
         >
           Clear
         </button>
+      </div>
+
+      <div className="toolbar-section">
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          Brightness:
+          <input
+            type="range"
+            min="0.1"
+            max="5.0"
+            step="0.1"
+            value={brightness}
+            onChange={(e) => onBrightnessChange(parseFloat(e.target.value))}
+            style={{ width: '120px' }}
+          />
+          <span style={{ minWidth: '40px', fontSize: '14px' }}>
+            {brightness.toFixed(1)}x
+          </span>
+        </label>
       </div>
 
       <div className="toolbar-section">

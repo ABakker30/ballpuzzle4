@@ -15,12 +15,13 @@ export const PuzzleShapePage: React.FC = () => {
   const [worldCells, setWorldCells] = useState<Set<string>>(new Set());
   const [worldPositions, setWorldPositions] = useState<Vector3[]>([]);
   const [worldCellPositions, setWorldCellPositions] = useState<WorldCell[]>([]);
-  const [sphereRadius, setSphereRadius] = useState<number>(0.4);
+  const [sphereRadius, setSphereRadius] = useState<number>(0.5);
   const [scene, setScene] = useState<THREE.Scene | null>(null);
   const [camera, setCamera] = useState<THREE.PerspectiveCamera | null>(null);
   const [undoStack, setUndoStack] = useState<Array<{type: 'add' | 'remove', cell: WorldCell}>>([]);
   const [redoStack, setRedoStack] = useState<Array<{type: 'add' | 'remove', cell: WorldCell}>>([]);
   const [liveCID, setLiveCID] = useState<string>('');
+  const [brightness, setBrightness] = useState<number>(1.0);
   const canvasRef = useRef<ThreeCanvasRef>(null);
 
   const handleLoadContainer = useCallback((newContainer: ContainerJson) => {
@@ -99,13 +100,32 @@ export const PuzzleShapePage: React.FC = () => {
     controls: any;
     renderer: THREE.WebGLRenderer;
   }) => {
-    console.log('Three.js context ready:', context);
     setScene(context.scene);
     setCamera(context.camera);
-    
-    // Store canvas reference for mouse events
-    context.scene.userData = { canvas: context.renderer.domElement };
   }, []);
+
+  // Update lighting brightness when brightness prop changes
+  React.useEffect(() => {
+    if (!scene) return;
+    
+    scene.traverse((child) => {
+      if (child instanceof THREE.Light) {
+        // Reset to base intensity then apply brightness multiplier
+        if (child instanceof THREE.AmbientLight) {
+          child.intensity = 1.2 * brightness;
+        } else if (child instanceof THREE.DirectionalLight) {
+          // Different base intensities for different lights
+          if (child.position.length() > 12) { // Main directional light
+            child.intensity = 0.8 * brightness;
+          } else if (child.position.length() > 8) { // Fill lights
+            child.intensity = 0.4 * brightness;
+          } else { // Other fill lights
+            child.intensity = 0.3 * brightness;
+          }
+        }
+      }
+    });
+  }, [scene, brightness]);
 
   const computeLiveCID = useCallback(async (cells: WorldCell[]) => {
     const engineCells: EngineCell[] = [];
@@ -125,38 +145,55 @@ export const PuzzleShapePage: React.FC = () => {
 
   const updateCellsAndFit = useCallback((newCells: WorldCell[]) => {
     // Update positions for rendering
-    const positions: Vector3[] = newCells.map(cell => ({
-      x: cell.X,
-      y: cell.Y,
-      z: cell.Z
-    }));
+    const positions: Vector3[] = [];
+    const worldCellSet = new Set<string>();
     
-    setWorldCellPositions(newCells);
-    setWorldPositions(positions);
-    
-    // Update cell set for quick lookup
-    const cellSet = new Set<string>();
     newCells.forEach(cell => {
-      cellSet.add(keyW(cell.X, cell.Y, cell.Z));
+      const key = keyW(cell.X, cell.Y, cell.Z);
+      worldCellSet.add(key);
+      positions.push({ x: cell.X, y: cell.Y, z: cell.Z });
     });
-    setWorldCells(cellSet);
     
-    // Recalculate optimal radius
-    const optimalRadius = calculateOptimalRadius(newCells);
-    setSphereRadius(optimalRadius);
-    
-    // Update pivot point to center of bounding box
-    if (canvasRef.current && newCells.length > 0) {
-      const bounds = new THREE.Box3();
-      newCells.forEach(cell => {
-        bounds.expandByPoint(new THREE.Vector3(cell.X, cell.Y, cell.Z));
-      });
-      const center = bounds.getCenter(new THREE.Vector3());
-      canvasRef.current.setTarget(center);
+    // Calculate dynamic sphere radius based on closest distance between points
+    let calculatedRadius = 0.5; // Default fallback
+    if (newCells.length > 1) {
+      let minDistance = Infinity;
+      
+      for (let i = 0; i < newCells.length; i++) {
+        for (let j = i + 1; j < newCells.length; j++) {
+          const cell1 = newCells[i];
+          const cell2 = newCells[j];
+          const distance = Math.sqrt(
+            Math.pow(cell1.X - cell2.X, 2) +
+            Math.pow(cell1.Y - cell2.Y, 2) +
+            Math.pow(cell1.Z - cell2.Z, 2)
+          );
+          minDistance = Math.min(minDistance, distance);
+        }
+      }
+      
+      if (minDistance !== Infinity) {
+        calculatedRadius = minDistance / 2;
+        console.log(`Calculated sphere radius: ${calculatedRadius} (min distance: ${minDistance})`);
+      }
     }
+    
+    setSphereRadius(calculatedRadius);
+    setWorldCells(worldCellSet);
+    setWorldPositions(positions);
+    setWorldCellPositions(newCells);
     
     // Compute live CID
     computeLiveCID(newCells);
+    
+    // Auto-fit view to new bounds
+    if (canvasRef.current && newCells.length > 0) {
+      const bounds = new THREE.Box3();
+      positions.forEach(pos => {
+        bounds.expandByPoint(new THREE.Vector3(pos.x, pos.y, pos.z));
+      });
+      canvasRef.current.fit(bounds);
+    }
   }, [computeLiveCID]);
 
   React.useEffect(() => {
@@ -191,9 +228,19 @@ export const PuzzleShapePage: React.FC = () => {
 
   // Cell editing handlers
   const handleAddCell = useCallback((cell: WorldCell) => {
+    console.log('=== HANDLE ADD CELL CALLED ===');
+    console.log('Adding cell:', cell);
+    console.log('Current worldCells size:', worldCells.size);
+    console.log('Current worldCellPositions length:', worldCellPositions.length);
+    
     const key = keyW(cell.X, cell.Y, cell.Z);
+    console.log('Cell key:', key);
+    console.log('Cell already exists:', worldCells.has(key));
+    
     if (!worldCells.has(key)) {
       const newCells = [...worldCellPositions, cell];
+      console.log('New cells array length:', newCells.length);
+      setWorldCellPositions(newCells);
       updateCellsAndFit(newCells);
       setUndoStack(prev => [...prev, { type: 'remove', cell }]);
       setRedoStack([]);
@@ -201,11 +248,21 @@ export const PuzzleShapePage: React.FC = () => {
   }, [worldCells, worldCellPositions, updateCellsAndFit]);
 
   const handleRemoveCell = useCallback((cell: WorldCell) => {
+    console.log('=== HANDLE REMOVE CELL CALLED ===');
+    console.log('Removing cell:', cell);
+    console.log('Current worldCells size:', worldCells.size);
+    console.log('Current worldCellPositions length:', worldCellPositions.length);
+    
     const key = keyW(cell.X, cell.Y, cell.Z);
+    console.log('Cell key:', key);
+    console.log('Cell exists:', worldCells.has(key));
+    
     if (worldCells.has(key)) {
       const newCells = worldCellPositions.filter(c => 
         !(c.X === cell.X && c.Y === cell.Y && c.Z === cell.Z)
       );
+      console.log('New cells array length:', newCells.length);
+      setWorldCellPositions(newCells);
       updateCellsAndFit(newCells);
       setUndoStack(prev => [...prev, { type: 'add', cell }]);
       setRedoStack([]);
@@ -359,6 +416,8 @@ export const PuzzleShapePage: React.FC = () => {
           onClear={handleClear}
           liveCID={liveCID}
           canSave={cellCount % 4 === 0}
+          brightness={brightness}
+          onBrightnessChange={setBrightness}
         />
       </div>
       

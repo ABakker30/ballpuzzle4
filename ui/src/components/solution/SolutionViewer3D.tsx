@@ -69,6 +69,7 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
   }>>([]);
   const [scene, setScene] = useState<THREE.Scene | null>(null);
   const [camera, setCamera] = useState<THREE.PerspectiveCamera | null>(null);
+  const [cameraInitialized, setCameraInitialized] = useState<boolean>(false);
 
   const handleThreeReady = (context: { scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: any; renderer: THREE.WebGLRenderer }) => {
     setScene(context.scene);
@@ -222,25 +223,43 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
     
     console.log('SolutionViewer3D: Setting sphere groups:', groupsWithRadius);
     setSphereGroups(groupsWithRadius);
+  }, [solution, maxPlacements]);
+
+  // Separate effect for initial camera positioning - only runs when solution changes
+  useEffect(() => {
+    if (!solution || !solution.placements || cameraInitialized || !canvasRef.current) {
+      return;
+    }
+
+    // Calculate bounds from full solution (not filtered by maxPlacements)
+    const bounds = new THREE.Box3();
+    const pieceGroups: Record<string, Array<{ x: number; y: number; z: number }>> = {};
     
-    // Auto-fit view when solution loads
-    if (groups.length > 0 && canvasRef.current) {
-      const bounds = new THREE.Box3();
-      groups.forEach(group => {
-        for (let i = 0; i < group.positions.length; i += 3) {
-          bounds.expandByPoint(new THREE.Vector3(
-            group.positions[i],
-            group.positions[i + 1], 
-            group.positions[i + 2]
-          ));
-        }
-      });
-      
-      if (!bounds.isEmpty()) {
-        canvasRef.current.fit(bounds);
+    for (const placement of solution.placements) {
+      const piece = placement.piece;
+      if (!pieceGroups[piece]) {
+        pieceGroups[piece] = [];
+      }
+
+      const coordinates = placement.cells_ijk || [];
+      for (const coord of coordinates) {
+        const [i, j, k] = coord;
+        const worldCell = engineToWorldInt(i, j, k);
+        bounds.expandByPoint(new THREE.Vector3(worldCell.X, worldCell.Y, worldCell.Z));
       }
     }
-  }, [solution, maxPlacements]);
+    
+    if (!bounds.isEmpty()) {
+      console.log('SolutionViewer3D: Setting initial camera position for solution');
+      canvasRef.current.fit(bounds);
+      setCameraInitialized(true);
+    }
+  }, [solution, cameraInitialized]);
+
+  // Reset camera initialization when solution changes
+  useEffect(() => {
+    setCameraInitialized(false);
+  }, [solution]);
 
   return (
     <div style={{ width: '100%', height: '500px', border: '1px solid var(--border)', borderRadius: '8px' }}>
