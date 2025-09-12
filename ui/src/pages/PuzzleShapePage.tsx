@@ -143,7 +143,7 @@ export const PuzzleShapePage: React.FC = () => {
     }
   }, []);
 
-  const updateCellsAndFit = useCallback((newCells: WorldCell[]) => {
+  const updateCellsOnly = useCallback((newCells: WorldCell[]) => {
     // Update positions for rendering
     const positions: Vector3[] = [];
     const worldCellSet = new Set<string>();
@@ -185,20 +185,11 @@ export const PuzzleShapePage: React.FC = () => {
     
     // Compute live CID
     computeLiveCID(newCells);
-    
-    // Auto-fit view to new bounds
-    if (canvasRef.current && newCells.length > 0) {
-      const bounds = new THREE.Box3();
-      positions.forEach(pos => {
-        bounds.expandByPoint(new THREE.Vector3(pos.x, pos.y, pos.z));
-      });
-      canvasRef.current.fit(bounds);
-    }
   }, [computeLiveCID]);
 
   React.useEffect(() => {
-    updateCellsAndFit(worldCellPositions);
-  }, [worldCellPositions]);
+    updateCellsOnly(worldCellPositions);
+  }, [worldCellPositions, updateCellsOnly]);
 
   React.useEffect(() => {
     if (worldCells.size === 0) {
@@ -241,11 +232,11 @@ export const PuzzleShapePage: React.FC = () => {
       const newCells = [...worldCellPositions, cell];
       console.log('New cells array length:', newCells.length);
       setWorldCellPositions(newCells);
-      updateCellsAndFit(newCells);
+      updateCellsOnly(newCells);
       setUndoStack(prev => [...prev, { type: 'remove', cell }]);
       setRedoStack([]);
     }
-  }, [worldCells, worldCellPositions, updateCellsAndFit]);
+  }, [worldCells, worldCellPositions, updateCellsOnly]);
 
   const handleRemoveCell = useCallback((cell: WorldCell) => {
     console.log('=== HANDLE REMOVE CELL CALLED ===');
@@ -263,11 +254,11 @@ export const PuzzleShapePage: React.FC = () => {
       );
       console.log('New cells array length:', newCells.length);
       setWorldCellPositions(newCells);
-      updateCellsAndFit(newCells);
+      updateCellsOnly(newCells);
       setUndoStack(prev => [...prev, { type: 'add', cell }]);
       setRedoStack([]);
     }
-  }, [worldCells, worldCellPositions, updateCellsAndFit]);
+  }, [worldCells, worldCellPositions, updateCellsOnly]);
 
   const handleToggleCell = useCallback((cell: WorldCell) => {
     const key = keyW(cell.X, cell.Y, cell.Z);
@@ -434,7 +425,7 @@ export const PuzzleShapePage: React.FC = () => {
               camera={camera}
               onAdd={handleAddCell}
               onRemove={handleRemoveCell}
-              onRequestFit={handleFitView}
+              onRequestFit={() => {}}
             />
           )}
         </ThreeCanvas>

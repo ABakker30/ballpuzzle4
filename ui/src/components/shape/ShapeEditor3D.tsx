@@ -35,6 +35,9 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
   const cellIndexMapRef = useRef<Map<number, WorldCell>>(new Map());
   const validNeighborsRef = useRef<WorldCell[]>([]);
   const debounceTimeoutRef = useRef<number | null>(null);
+  const mouseDownCameraPositionRef = useRef<THREE.Vector3 | null>(null);
+  const mouseDownCameraRotationRef = useRef<THREE.Euler | null>(null);
+  const mouseDownButtonRef = useRef<number | null>(null);
 
   // Convert cells to positions and build index map
   const positions = React.useMemo(() => {
@@ -238,6 +241,30 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     return true;
   }, [scale]);
 
+  // Check if camera moved during mouse interaction
+  const hasCameraMoved = useCallback((): boolean => {
+    if (!camera || !mouseDownCameraPositionRef.current || !mouseDownCameraRotationRef.current) {
+      console.log('Camera movement check: missing camera or stored positions');
+      return false;
+    }
+    
+    const positionThreshold = 0.01; // Increased threshold - was too sensitive
+    const rotationThreshold = 0.01; // Increased threshold - was too sensitive
+    
+    const positionDistance = camera.position.distanceTo(mouseDownCameraPositionRef.current);
+    const positionMoved = positionDistance > positionThreshold;
+    
+    const rotationDiffX = Math.abs(camera.rotation.x - mouseDownCameraRotationRef.current.x);
+    const rotationDiffY = Math.abs(camera.rotation.y - mouseDownCameraRotationRef.current.y);
+    const rotationDiffZ = Math.abs(camera.rotation.z - mouseDownCameraRotationRef.current.z);
+    const rotationMoved = rotationDiffX > rotationThreshold || rotationDiffY > rotationThreshold || rotationDiffZ > rotationThreshold;
+    
+    console.log('Camera position distance:', positionDistance, 'threshold:', positionThreshold, 'moved:', positionMoved);
+    console.log('Camera rotation diffs:', rotationDiffX, rotationDiffY, rotationDiffZ, 'threshold:', rotationThreshold, 'moved:', rotationMoved);
+    
+    return positionMoved || rotationMoved;
+  }, [camera]);
+
   const handleClick = useCallback((event: MouseEvent) => {
     console.log('=== CLICK HANDLER CALLED ===');
     console.log('hoveredCell:', hoveredCell);
@@ -252,6 +279,12 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     
     if (isCameraMoving) {
       console.log('Click ignored: camera is moving');
+      return;
+    }
+    
+    // Check if camera moved during ANY mouse interaction (including left button)
+    if (hasCameraMoved()) {
+      console.log('Click ignored: camera moved during mouse interaction (button:', mouseDownButtonRef.current, ')');
       return;
     }
 
@@ -370,8 +403,17 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
   // Camera movement detection handlers
   const handleMouseDown = useCallback((event: MouseEvent) => {
     console.log('=== MOUSE DOWN ===', 'button:', event.button);
+    
+    // Store mouse button and camera state
+    mouseDownButtonRef.current = event.button;
+    
+    if (camera) {
+      mouseDownCameraPositionRef.current = camera.position.clone();
+      mouseDownCameraRotationRef.current = camera.rotation.clone();
+      console.log('Stored camera position for button', event.button);
+    }
+    
     // Only track camera movement for right mouse button (orbit) and middle mouse button (pan)
-    // Left mouse button (0) should be reserved for sphere clicking
     if (event.button === 1 || event.button === 2) {
       console.log('Setting camera moving to TRUE');
       setIsCameraMoving(true);
@@ -382,7 +424,7 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
         debounceTimeoutRef.current = null;
       }
     }
-  }, []);
+  }, [camera]);
 
   const handleMouseUp = useCallback((event: MouseEvent) => {
     console.log('=== MOUSE UP ===', 'button:', event.button);
@@ -397,7 +439,7 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
         console.log('Debounce timer fired - setting camera moving to FALSE');
         setIsCameraMoving(false);
         debounceTimeoutRef.current = null;
-      }, 300); // Increased to 300ms debounce for better stability
+      }, 100); // 100ms delay after camera movement stops
     }
   }, []);
 
@@ -410,10 +452,11 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       clearTimeout(debounceTimeoutRef.current);
     }
     
+    // Debounce the re-enable of interactions
     debounceTimeoutRef.current = window.setTimeout(() => {
       setIsCameraMoving(false);
       debounceTimeoutRef.current = null;
-    }, 300); // 300ms debounce after wheel stops
+    }, 100); // 100ms delay after wheel zoom stops
   }, []);
 
   // Set up mouse event listeners
