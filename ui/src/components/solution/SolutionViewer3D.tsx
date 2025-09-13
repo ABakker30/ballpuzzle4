@@ -24,46 +24,87 @@ export interface SolutionViewer3DRef {
 
 // MPEG creation function using Web APIs
 const createMPEGFromFrames = async (frameFiles: { name: string; blob: Blob }[], fps: number): Promise<Blob> => {
-  // For browser-based MPEG creation, we'll use a simple approach
-  // In a real implementation, you might use FFmpeg.wasm or similar
+  // Create a simple WebM video using MediaRecorder API
+  // This creates an actual playable video file instead of just metadata
   
-  // Create a ZIP file containing all frames and metadata
-  const zipContent: { [filename: string]: Blob } = {};
+  if (frameFiles.length === 0) {
+    throw new Error('No frames provided for video creation');
+  }
   
-  // Add all frame files
-  frameFiles.forEach(frame => {
-    zipContent[frame.name] = frame.blob;
+  // Create a canvas to render frames
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Could not get canvas context');
+  }
+  
+  // Get dimensions from first frame
+  const firstFrameImg = new Image();
+  const firstFrameUrl = URL.createObjectURL(frameFiles[0].blob);
+  
+  return new Promise((resolve, reject) => {
+    firstFrameImg.onload = async () => {
+      canvas.width = firstFrameImg.width;
+      canvas.height = firstFrameImg.height;
+      
+      // Set up MediaRecorder
+      const stream = canvas.captureStream(fps);
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 5000000 // 5 Mbps for good quality
+      });
+      
+      const chunks: Blob[] = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = () => {
+        const videoBlob = new Blob(chunks, { type: 'video/webm' });
+        resolve(videoBlob);
+      };
+      
+      mediaRecorder.onerror = (event) => {
+        reject(new Error('MediaRecorder error: ' + event));
+      };
+      
+      // Start recording
+      mediaRecorder.start();
+      
+      // Render each frame
+      const frameDuration = 1000 / fps; // milliseconds per frame
+      
+      for (let i = 0; i < frameFiles.length; i++) {
+        const img = new Image();
+        const frameUrl = URL.createObjectURL(frameFiles[i].blob);
+        
+        await new Promise<void>((frameResolve) => {
+          img.onload = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(frameUrl);
+            
+            // Wait for frame duration
+            setTimeout(frameResolve, frameDuration);
+          };
+          img.src = frameUrl;
+        });
+      }
+      
+      // Stop recording
+      mediaRecorder.stop();
+      URL.revokeObjectURL(firstFrameUrl);
+    };
+    
+    firstFrameImg.onerror = () => {
+      reject(new Error('Failed to load first frame'));
+    };
+    
+    firstFrameImg.src = firstFrameUrl;
   });
-  
-  // Add metadata file for video conversion
-  const metadata = {
-    fps,
-    frameCount: frameFiles.length,
-    format: 'png',
-    instructions: 'Use ffmpeg to convert: ffmpeg -framerate ' + fps + ' -i frame_%06d.png -c:v mpeg1video output.mpg'
-  };
-  
-  zipContent['metadata.json'] = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
-  zipContent['convert.bat'] = new Blob([`ffmpeg -framerate ${fps} -i frame_%06d.png -c:v mpeg1video -q:v 2 movie.mpg`], { type: 'text/plain' });
-  zipContent['convert.sh'] = new Blob([`#!/bin/bash\nffmpeg -framerate ${fps} -i frame_%06d.png -c:v mpeg1video -q:v 2 movie.mpg`], { type: 'text/plain' });
-  
-  // Create a simple ZIP-like structure (for demonstration)
-  // In production, you'd use a proper ZIP library or FFmpeg.wasm
-  const combinedData = Object.entries(zipContent).map(([name, blob]) => ({
-    name,
-    size: blob.size,
-    type: blob.type
-  }));
-  
-  const result = new Blob([JSON.stringify({
-    type: 'movie-frames-package',
-    frames: frameFiles.length,
-    fps,
-    files: combinedData,
-    note: 'This package contains video frames. Use FFmpeg or similar tool to create MPEG video.'
-  }, null, 2)], { type: 'application/json' });
-  
-  return result;
 };
 
 // Generate PBR paint colors for pieces A-Z - professional paint palette
@@ -782,8 +823,14 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       const totalFrames = duration * fps;
       const frameFiles: { name: string; blob: Blob }[] = [];
       
-      // Animation sequence timing
-      const phaseFrames = Math.floor(totalFrames / 5); // 5 phases
+      // Animation sequence timing based on new percentages
+      const phase1Frames = Math.floor(totalFrames * 0.05); // Full solution 5%
+      const phase2Frames = Math.floor(totalFrames * 0.20); // Placement max-to-min 20%
+      const phase3Frames = Math.floor(totalFrames * 0.20); // Placement min-to-max 20%
+      const phase4Frames = Math.floor(totalFrames * 0.05); // Full solution 5%
+      const phase5Frames = Math.floor(totalFrames * 0.20); // Separation min-to-max 20%
+      const phase6Frames = Math.floor(totalFrames * 0.20); // Separation max-to-min 20%
+      const phase7Frames = totalFrames - (phase1Frames + phase2Frames + phase3Frames + phase4Frames + phase5Frames + phase6Frames); // Full solution remaining (~10%)
       let frameIndex = 0;
       
       // Easing function (ease-in-out)
@@ -846,8 +893,8 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       const originalSpacing = pieceSpacing;
       
       try {
-        // Phase 1: Show full solution (static)
-        for (let i = 0; i < phaseFrames; i++) {
+        // Phase 1: Show full solution (static) - 5%
+        for (let i = 0; i < phase1Frames; i++) {
           const progress = (frameIndex / totalFrames) * 100;
           await waitForRender('Phase 1: Static Full Solution', progress);
           
@@ -860,15 +907,14 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
           frameIndex++;
         }
         
-        // Phase 2: Placement animation (if enabled)
+        // Phase 2: Placement animation max-to-min (if enabled) - 20%
         if (showPlacement && solution.placements) {
-          const placementFrames = phaseFrames;
-          for (let i = 0; i < placementFrames; i++) {
-            const progress = i / (placementFrames - 1);
+          for (let i = 0; i < phase2Frames; i++) {
+            const progress = i / (phase2Frames - 1);
             const easedProgress = easeInOut(progress);
             
-            // Animate through placements by changing maxPlacements
-            const targetPlacement = Math.max(1, Math.floor(easedProgress * solution.placements.length));
+            // Animate from max to min placements
+            const targetPlacement = Math.max(1, Math.floor((1 - easedProgress) * solution.placements.length) + 1);
             
             // Update both callback and internal state
             if (onMaxPlacementsChange) {
@@ -878,7 +924,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
             setMovieOverrides(prev => ({ ...prev, maxPlacements: targetPlacement }));
             
             const overallProgress = (frameIndex / totalFrames) * 100;
-            await waitForRender('Phase 2: Placement Animation', overallProgress);
+            await waitForRender('Phase 2: Placement Max-to-Min', overallProgress);
             
             const frameBlob = await captureSquareFrame();
             if (frameBlob) {
@@ -890,10 +936,39 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
           }
         }
         
-        // Phase 3: Show full solution again (static)
-        for (let i = 0; i < phaseFrames; i++) {
+        // Phase 3: Placement animation min-to-max (if enabled) - 20%
+        if (showPlacement && solution.placements) {
+          for (let i = 0; i < phase3Frames; i++) {
+            const progress = i / (phase3Frames - 1);
+            const easedProgress = easeInOut(progress);
+            
+            // Animate from min to max placements
+            const targetPlacement = Math.max(1, Math.floor(easedProgress * solution.placements.length) + 1);
+            
+            // Update both callback and internal state
+            if (onMaxPlacementsChange) {
+              onMaxPlacementsChange(targetPlacement);
+            }
+            // Override the maxPlacements for movie creation
+            setMovieOverrides(prev => ({ ...prev, maxPlacements: targetPlacement }));
+            
+            const overallProgress = (frameIndex / totalFrames) * 100;
+            await waitForRender('Phase 3: Placement Min-to-Max', overallProgress);
+            
+            const frameBlob = await captureSquareFrame();
+            if (frameBlob) {
+              const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
+              frameFiles.push({ name: filename, blob: frameBlob });
+              await saveFrameToDirectory(frameBlob, filename);
+            }
+            frameIndex++;
+          }
+        }
+        
+        // Phase 4: Show full solution again (static) - 5%
+        for (let i = 0; i < phase4Frames; i++) {
           const progress = (frameIndex / totalFrames) * 100;
-          await waitForRender('Phase 3: Static Full Solution', progress);
+          await waitForRender('Phase 4: Static Full Solution', progress);
           
           const frameBlob = await captureSquareFrame();
           if (frameBlob) {
@@ -904,12 +979,10 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
           frameIndex++;
         }
         
-        // Phase 4: Separation animation (if enabled)
+        // Phase 5: Separation animation min-to-max (if enabled) - 20%
         if (showSeparation) {
-          const separationFrames = phaseFrames;
-          
-          for (let i = 0; i < separationFrames; i++) {
-            const progress = i / (separationFrames - 1);
+          for (let i = 0; i < phase5Frames; i++) {
+            const progress = i / (phase5Frames - 1);
             const easedProgress = easeInOut(progress);
             
             // Animate spacing from 1.0 to 2.0
@@ -923,7 +996,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
             setMovieOverrides(prev => ({ ...prev, pieceSpacing: animatedSpacing }));
             
             const overallProgress = (frameIndex / totalFrames) * 100;
-            await waitForRender('Phase 4: Separation Animation', overallProgress);
+            await waitForRender('Phase 5: Separation Min-to-Max', overallProgress);
             
             const frameBlob = await captureSquareFrame();
             if (frameBlob) {
@@ -935,10 +1008,39 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
           }
         }
         
-        // Phase 5: Show final state (static)
-        for (let i = 0; i < phaseFrames; i++) {
+        // Phase 6: Separation animation max-to-min (if enabled) - 20%
+        if (showSeparation) {
+          for (let i = 0; i < phase6Frames; i++) {
+            const progress = i / (phase6Frames - 1);
+            const easedProgress = easeInOut(progress);
+            
+            // Animate spacing from 2.0 to 1.0
+            const animatedSpacing = 2.0 - easedProgress * 1.0;
+            
+            // Update both callback and internal state
+            if (onPieceSpacingChange) {
+              onPieceSpacingChange(animatedSpacing);
+            }
+            // Override the pieceSpacing for movie creation
+            setMovieOverrides(prev => ({ ...prev, pieceSpacing: animatedSpacing }));
+            
+            const overallProgress = (frameIndex / totalFrames) * 100;
+            await waitForRender('Phase 6: Separation Max-to-Min', overallProgress);
+            
+            const frameBlob = await captureSquareFrame();
+            if (frameBlob) {
+              const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
+              frameFiles.push({ name: filename, blob: frameBlob });
+              await saveFrameToDirectory(frameBlob, filename);
+            }
+            frameIndex++;
+          }
+        }
+        
+        // Phase 7: Show final state (static) - 10%
+        for (let i = 0; i < phase7Frames; i++) {
           const progress = (frameIndex / totalFrames) * 100;
-          await waitForRender('Phase 5: Final State', progress);
+          await waitForRender('Phase 7: Final State', progress);
           
           const frameBlob = await captureSquareFrame();
           if (frameBlob) {
@@ -949,8 +1051,24 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
           frameIndex++;
         }
         
-        // Create movie from frames
+        // Create movie from frames and save to directory
         const movieBlob = await createMPEGFromFrames(frameFiles, fps);
+        
+        // Save WebM video file to the same directory
+        if (directoryHandle && movieBlob) {
+          try {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const movieFilename = `puzzle_movie_${timestamp}.webm`;
+            const movieFileHandle = await directoryHandle.getFileHandle(movieFilename, { create: true });
+            const movieWritable = await movieFileHandle.createWritable();
+            await movieWritable.write(movieBlob);
+            await movieWritable.close();
+            console.log(`Movie saved as: ${movieFilename}`);
+          } catch (err) {
+            console.error('Failed to save movie file:', err);
+          }
+        }
+        
         return movieBlob;
         
       } finally {
@@ -967,8 +1085,8 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
   }), [solution]);
 
   return (
-    <div style={{ width: '100%', height: '500px', border: '1px solid var(--border)', borderRadius: '8px', display: 'flex', justifyContent: 'center' }}>
-      <div style={{ width: '500px', height: '500px' }}>
+    <div style={{ width: '100%', height: '100vh', border: '1px solid var(--border)', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ width: 'calc(100vh * 9 / 16)', height: '100vh', maxWidth: '100%' }}>
         <ThreeCanvas ref={canvasRef} onReady={handleThreeReady}>
         {scene && pieceGroups.length > 0 && (
           <>
