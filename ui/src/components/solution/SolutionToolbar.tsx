@@ -11,7 +11,7 @@ interface SolutionToolbarProps {
   pieceSpacing: number;
   onPieceSpacingChange: (spacing: number) => void;
   onTakeScreenshot: () => void;
-  onCreateMovie: (duration: number, showPlacement: boolean, showSeparation: boolean) => void;
+  onCreateMovie: (duration: number, fpsQuality: 'preview' | 'production' | 'high', showPlacement: boolean, placementPercentage: number, showSeparation: boolean, separationPercentage: number, aspectRatio: 'square' | 'landscape' | 'portrait' | 'instagram_story' | 'instagram_post', showRotation: boolean, rotationPercentage: number, rotations: number) => void;
 }
 
 export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
@@ -28,8 +28,15 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showMovieDialog, setShowMovieDialog] = useState(false);
   const [movieDuration, setMovieDuration] = useState(10);
+  const [fpsQuality, setFpsQuality] = useState<'preview' | 'production' | 'high'>('production');
   const [showPlacementAnimation, setShowPlacementAnimation] = useState(true);
+  const [placementPercentage, setPlacementPercentage] = useState(40);
   const [showSeparationAnimation, setShowSeparationAnimation] = useState(true);
+  const [separationPercentage, setSeparationPercentage] = useState(40);
+  const [aspectRatio, setAspectRatio] = useState<'square' | 'landscape' | 'portrait' | 'instagram_story' | 'instagram_post'>('square');
+  const [showRotationAnimation, setShowRotationAnimation] = useState(false);
+  const [rotationPercentage, setRotationPercentage] = useState(20);
+  const [rotations, setRotations] = useState(1);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -91,7 +98,7 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
   };
 
   const handleCreateMovie = () => {
-    onCreateMovie(movieDuration, showPlacementAnimation, showSeparationAnimation);
+    onCreateMovie(movieDuration, fpsQuality, showPlacementAnimation, placementPercentage, showSeparationAnimation, separationPercentage, aspectRatio, showRotationAnimation, rotationPercentage, rotations);
     setShowMovieDialog(false);
   };
 
@@ -128,7 +135,7 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
       {solution && (
         <div className="toolbar-section">
           <Slider
-            label="Separation (scale from pivot)"
+            label="Separation"
             min={1}
             max={2}
             step={0.01}
@@ -142,11 +149,11 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
 
       {solution && (
         <div className="toolbar-section">
-          <button className="button" onClick={onTakeScreenshot}>
-            📸 Screenshot
+          <button className="button" onClick={onTakeScreenshot} title="Take Screenshot">
+            📸
           </button>
-          <button className="button" onClick={() => setShowMovieDialog(true)}>
-            🎬 Create Movie
+          <button className="button" onClick={() => setShowMovieDialog(true)} title="Create Movie">
+            🎬
           </button>
         </div>
       )}
@@ -182,7 +189,7 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
                 min="1"
                 max="60"
                 value={movieDuration}
-                onChange={(e) => setMovieDuration(parseInt(e.target.value) || 10)}
+                onChange={(e) => setMovieDuration(parseInt(e.target.value))}
                 style={{
                   width: '100%',
                   padding: '8px',
@@ -193,25 +200,213 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
             </div>
 
             <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                <input
-                  type="checkbox"
-                  checked={showPlacementAnimation}
-                  onChange={(e) => setShowPlacementAnimation(e.target.checked)}
-                  style={{ marginRight: '8px' }}
-                />
-                Show placement animation
+              <label style={{ display: 'block', marginBottom: '8px' }}>
+                Quality:
               </label>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                <label style={{ display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="fpsQuality"
+                    value="preview"
+                    checked={fpsQuality === 'preview'}
+                    onChange={(e) => setFpsQuality(e.target.value as any)}
+                    style={{ marginRight: '4px' }}
+                  />
+                  Preview (10fps)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="fpsQuality"
+                    value="production"
+                    checked={fpsQuality === 'production'}
+                    onChange={(e) => setFpsQuality(e.target.value as any)}
+                    style={{ marginRight: '4px' }}
+                  />
+                  Production (30fps)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="fpsQuality"
+                    value="high"
+                    checked={fpsQuality === 'high'}
+                    onChange={(e) => setFpsQuality(e.target.value as any)}
+                    style={{ marginRight: '4px' }}
+                  />
+                  High (60fps)
+                </label>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '8px' }}>
+                Canvas Format:
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '16px' }}>
+                <label style={{ display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="aspectRatio"
+                    value="square"
+                    checked={aspectRatio === 'square'}
+                    onChange={(e) => setAspectRatio(e.target.value as any)}
+                    style={{ marginRight: '4px' }}
+                  />
+                  Square (1:1)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="aspectRatio"
+                    value="landscape"
+                    checked={aspectRatio === 'landscape'}
+                    onChange={(e) => setAspectRatio(e.target.value as any)}
+                    style={{ marginRight: '4px' }}
+                  />
+                  Landscape (16:9)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="aspectRatio"
+                    value="portrait"
+                    checked={aspectRatio === 'portrait'}
+                    onChange={(e) => setAspectRatio(e.target.value as any)}
+                    style={{ marginRight: '4px' }}
+                  />
+                  Portrait (9:16)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="aspectRatio"
+                    value="instagram_story"
+                    checked={aspectRatio === 'instagram_story'}
+                    onChange={(e) => setAspectRatio(e.target.value as any)}
+                    style={{ marginRight: '4px' }}
+                  />
+                  Story (9:16)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="aspectRatio"
+                    value="instagram_post"
+                    checked={aspectRatio === 'instagram_post'}
+                    onChange={(e) => setAspectRatio(e.target.value as any)}
+                    style={{ marginRight: '4px' }}
+                  />
+                  Post (4:5)
+                </label>
+              </div>
               
-              <label style={{ display: 'flex', alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={showSeparationAnimation}
-                  onChange={(e) => setShowSeparationAnimation(e.target.checked)}
-                  style={{ marginRight: '8px' }}
-                />
-                Separation scale animation
-              </label>
+              
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={showPlacementAnimation}
+                    onChange={(e) => setShowPlacementAnimation(e.target.checked)}
+                    style={{ marginRight: '8px' }}
+                  />
+                  Placement Animation
+                </label>
+                {showPlacementAnimation && (
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={placementPercentage}
+                    onChange={(e) => setPlacementPercentage(parseInt(e.target.value))}
+                    style={{
+                      width: '60px',
+                      padding: '4px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '4px',
+                      marginLeft: '8px'
+                    }}
+                  />
+                )}
+                {showPlacementAnimation && <span style={{ marginLeft: '4px' }}>%</span>}
+              </div>
+              
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={showSeparationAnimation}
+                    onChange={(e) => setShowSeparationAnimation(e.target.checked)}
+                    style={{ marginRight: '8px' }}
+                  />
+                  Separation Animation
+                </label>
+                {showSeparationAnimation && (
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={separationPercentage}
+                    onChange={(e) => setSeparationPercentage(parseInt(e.target.value))}
+                    style={{
+                      width: '60px',
+                      padding: '4px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '4px',
+                      marginLeft: '8px'
+                    }}
+                  />
+                )}
+                {showSeparationAnimation && <span style={{ marginLeft: '4px' }}>%</span>}
+              </div>
+              
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={showRotationAnimation}
+                    onChange={(e) => setShowRotationAnimation(e.target.checked)}
+                    style={{ marginRight: '8px' }}
+                  />
+                  Rotation Animation
+                </label>
+                {showRotationAnimation && (
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={rotationPercentage}
+                    onChange={(e) => setRotationPercentage(parseInt(e.target.value))}
+                    style={{
+                      width: '60px',
+                      padding: '4px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '4px',
+                      marginLeft: '8px'
+                    }}
+                  />
+                )}
+                {showRotationAnimation && <span style={{ marginLeft: '4px' }}>%</span>}
+                {showRotationAnimation && (
+                  <input
+                    type="number"
+                    min="0"
+                    max="10"
+                    step="0.5"
+                    value={rotations}
+                    onChange={(e) => setRotations(parseFloat(e.target.value))}
+                    style={{
+                      width: '60px',
+                      padding: '4px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '4px',
+                      marginLeft: '8px'
+                    }}
+                  />
+                )}
+                {showRotationAnimation && <span style={{ marginLeft: '4px', fontSize: '0.9em' }}>rot</span>}
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>

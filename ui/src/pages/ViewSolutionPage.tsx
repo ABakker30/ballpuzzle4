@@ -9,6 +9,7 @@ export const ViewSolutionPage: React.FC = () => {
   const [pieceSpacing, setPieceSpacing] = useState<number>(1.0);
   const [isCreatingMovie, setIsCreatingMovie] = useState(false);
   const [movieProgress, setMovieProgress] = useState({ progress: 0, phase: '' });
+  const [movieAbortController, setMovieAbortController] = useState<AbortController | null>(null);
   const viewer3DRef = useRef<SolutionViewer3DRef>(null);
   
   const handleLoadSolution = (solutionData: SolutionJson) => {
@@ -57,20 +58,37 @@ export const ViewSolutionPage: React.FC = () => {
     }
   };
 
-  const handleCreateMovie = async (duration: number, showPlacement: boolean, showSeparation: boolean) => {
+  const handleStopMovie = () => {
+    if (movieAbortController) {
+      movieAbortController.abort();
+      setMovieAbortController(null);
+      setIsCreatingMovie(false);
+      setMovieProgress({ progress: 0, phase: '' });
+    }
+  };
+
+  const handleCreateMovie = async (duration: number, fpsQuality: 'preview' | 'production' | 'high', showPlacement: boolean, placementPercentage: number, showSeparation: boolean, separationPercentage: number, aspectRatio: 'square' | 'landscape' | 'portrait' | 'instagram_story' | 'instagram_post', showRotation: boolean, rotationPercentage: number, rotations: number) => {
     if (!viewer3DRef.current || isCreatingMovie) return;
     
+    const abortController = new AbortController();
+    setMovieAbortController(abortController);
     setIsCreatingMovie(true);
     setMovieProgress({ progress: 0, phase: 'Starting...' });
     
     try {
       const movieBlob = await viewer3DRef.current.createMovie(
         duration, 
+        fpsQuality,
         showPlacement, 
+        placementPercentage,
         showSeparation,
-        (progress: number, phase: string) => {
-          setMovieProgress({ progress, phase });
-        }
+        separationPercentage,
+        (progress: number, phase: string) => setMovieProgress({ progress, phase }),
+        abortController.signal,
+        aspectRatio,
+        showRotation,
+        rotationPercentage,
+        rotations
       );
       
       // Use File System Access API if available
@@ -103,17 +121,21 @@ export const ViewSolutionPage: React.FC = () => {
       // Clean up the URL object
       URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Failed to create movie:', error);
-      alert(`Failed to create movie: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Movie creation was cancelled by user');
+      } else {
+        console.error('Failed to create movie:', error);
+        alert(`Failed to create movie: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     } finally {
       setIsCreatingMovie(false);
       setMovieProgress({ progress: 0, phase: '' });
+      setMovieAbortController(null);
     }
   };
 
   return (
-    <div style={{ display: 'grid', gap: '16px', height: '100%' }}>
-      <h2>View Solution</h2>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw' }}>
       
       <SolutionToolbar
         onLoadSolution={handleLoadSolution}
@@ -127,41 +149,39 @@ export const ViewSolutionPage: React.FC = () => {
         onCreateMovie={handleCreateMovie}
       />
 
-      <SolutionViewer3D
-        ref={viewer3DRef}
-        solution={solution}
-        maxPlacements={maxPlacements}
-        brightness={2.0}
-        orientToSurface={true}
-        pieceSpacing={pieceSpacing}
-        onMaxPlacementsChange={setMaxPlacements}
-        onPieceSpacingChange={setPieceSpacing}
-      />
-      
+      <div style={{ flex: 1, width: '100%' }}>
+        <SolutionViewer3D
+          ref={viewer3DRef}
+          solution={solution}
+          maxPlacements={maxPlacements}
+          brightness={2.0}
+          orientToSurface={true}
+          pieceSpacing={pieceSpacing}
+          onMaxPlacementsChange={setMaxPlacements}
+          onPieceSpacingChange={setPieceSpacing}
+        />
+      </div>
       {isCreatingMovie && (
         <div style={{
           position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
+          top: '20px',
+          right: '20px',
           backgroundColor: 'var(--surface)',
-          padding: '20px',
+          padding: '16px',
           borderRadius: '8px',
           border: '1px solid var(--border)',
           boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
           zIndex: 1000,
-          minWidth: '400px',
+          minWidth: '200px',
           textAlign: 'center'
         }}>
-          <h3>Creating Movie...</h3>
-          <p>{movieProgress.phase}</p>
           <div style={{ 
             width: '100%', 
-            height: '20px', 
+            height: '8px', 
             backgroundColor: 'var(--border)', 
-            borderRadius: '10px',
+            borderRadius: '4px',
             overflow: 'hidden',
-            marginTop: '10px'
+            marginBottom: '8px'
           }}>
             <div style={{
               width: `${movieProgress.progress}%`,
@@ -170,12 +190,23 @@ export const ViewSolutionPage: React.FC = () => {
               transition: 'width 0.3s ease'
             }} />
           </div>
-          <p style={{ marginTop: '10px', fontSize: '14px', color: 'var(--muted)' }}>
+          <p style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '500' }}>
             {Math.round(movieProgress.progress)}% complete
           </p>
-          <p style={{ fontSize: '12px', color: 'var(--muted)' }}>
-            Frames are being saved to your selected directory
-          </p>
+          <button 
+            onClick={handleStopMovie}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: '#dc3545',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+          >
+            Cancel
+          </button>
         </div>
       )}
     </div>

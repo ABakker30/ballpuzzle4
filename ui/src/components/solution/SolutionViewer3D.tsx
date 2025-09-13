@@ -19,7 +19,7 @@ interface SolutionViewer3DProps {
 
 export interface SolutionViewer3DRef {
   takeScreenshot: () => Promise<string>;
-  createMovie: (duration: number, showPlacement: boolean, showSeparation: boolean, onProgress?: (progress: number, phase: string) => void) => Promise<Blob>;
+  createMovie: (duration: number, showPlacement: boolean, showSeparation: boolean, onProgress?: (progress: number, phase: string) => void, abortSignal?: AbortSignal, aspectRatio?: 'portrait' | 'landscape' | 'square') => Promise<Blob>;
 }
 
 // MPEG creation function using Web APIs
@@ -271,9 +271,40 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       console.log(`Piece ${piece} centroid: [${pieceCentroids[piece].x.toFixed(3)}, ${pieceCentroids[piece].y.toFixed(3)}, ${pieceCentroids[piece].z.toFixed(3)}] (${pieceSphereCount[piece]} spheres)`);
     });
 
-    // Use hull centroid as pivot (from orientation result) or calculate from all spheres
+    // Recompute convex hull after orientation to get accurate centroid for camera pivot
     let pivot = new THREE.Vector3(0, 0, 0);
-    if (orientationResult) {
+    
+    // Collect all oriented sphere positions for hull computation
+    const orientedPoints: THREE.Vector3[] = [];
+    Object.keys(pieceCentroids).forEach(piece => {
+      const pieceGroup = pieceGroups.find(group => group.piece === piece);
+      if (pieceGroup && pieceGroup.spheres && pieceGroup.spheres.positions) {
+        // Extract positions from Float32Array (x, y, z triplets)
+        const positions = pieceGroup.spheres.positions;
+        for (let i = 0; i < positions.length; i += 3) {
+          // Apply orientation transform to get final world position
+          let worldPos = new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]);
+          if (orientationResult) {
+            worldPos.applyQuaternion(orientationResult.rotation);
+            worldPos.add(orientationResult.translation);
+          }
+          orientedPoints.push(worldPos);
+        }
+      }
+    });
+    
+    if (orientedPoints.length > 0) {
+      // Recompute convex hull on oriented geometry
+      const { vertices } = geometryProcessor.computeConvexHull(orientedPoints);
+      
+      // Calculate centroid of the oriented convex hull
+      pivot = new THREE.Vector3(0, 0, 0);
+      vertices.forEach(vertex => pivot.add(vertex));
+      pivot.divideScalar(vertices.length);
+      
+      console.log('SolutionViewer3D: Recomputed hull centroid after orientation:', pivot.toArray());
+    } else if (orientationResult) {
+      // Fallback to original hull centroid
       pivot = orientationResult.hullCentroid.clone();
     } else {
       // Calculate centroid of all spheres
@@ -803,7 +834,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       return dataUrl;
     },
     
-    createMovie: async (duration: number, showPlacement: boolean, showSeparation: boolean, onProgress?: (progress: number, phase: string) => void): Promise<Blob> => {
+    createMovie: async (duration: number, fpsQuality: 'preview' | 'production' | 'high', showPlacement: boolean, placementPercentage: number, showSeparation: boolean, separationPercentage: number, onProgress?: (progress: number, phase: string) => void, abortSignal?: AbortSignal, aspectRatio: 'square' | 'landscape' | 'portrait' | 'instagram_story' | 'instagram_post' = 'square', showRotation: boolean = false, rotationPercentage: number = 20, rotations: number = 1): Promise<Blob> => {
       if (!canvasRef.current || !solution) {
         throw new Error('Canvas or solution not ready');
       }
@@ -820,18 +851,33 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         throw new Error('Directory picker not supported in this browser');
       }
       
-      const fps = 30;
+      // Map FPS quality to actual frame rates
+      const fpsMap = {
+        preview: 10,
+        production: 30,
+        high: 60
+      };
+      const fps = fpsMap[fpsQuality];
       const totalFrames = duration * fps;
       const frameFiles: { name: string; blob: Blob }[] = [];
       
-      // Animation sequence timing based on new percentages
-      const phase1Frames = Math.floor(totalFrames * 0.05); // Full solution 5%
-      const phase2Frames = Math.floor(totalFrames * 0.20); // Placement max-to-min 20%
-      const phase3Frames = Math.floor(totalFrames * 0.20); // Placement min-to-max 20%
-      const phase4Frames = Math.floor(totalFrames * 0.05); // Full solution 5%
-      const phase5Frames = Math.floor(totalFrames * 0.20); // Separation min-to-max 20%
-      const phase6Frames = Math.floor(totalFrames * 0.20); // Separation max-to-min 20%
-      const phase7Frames = totalFrames - (phase1Frames + phase2Frames + phase3Frames + phase4Frames + phase5Frames + phase6Frames); // Full solution remaining (~10%)
+      // Calculate frame allocation based on enabled animations and their percentages
+      let placementFrames = 0;
+      let separationFrames = 0;
+      let rotationFrames = 0;
+      
+      if (showPlacement) {
+        placementFrames = Math.floor(totalFrames * (placementPercentage / 100));
+      }
+      if (showSeparation) {
+        separationFrames = Math.floor(totalFrames * (separationPercentage / 100));
+      }
+      if (showRotation) {
+        rotationFrames = Math.floor(totalFrames * (rotationPercentage / 100));
+      }
+      
+      // If no animations are enabled, just show static frames
+      const staticFrames = totalFrames - Math.max(placementFrames, separationFrames, rotationFrames);
       let frameIndex = 0;
       
       // Easing function (ease-in-out)
@@ -839,8 +885,8 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       };
       
-      // Helper function to capture and crop frame
-      const captureSquareFrame = async (): Promise<Blob | null> => {
+      // Helper function to capture frame with specified aspect ratio
+      const captureFrame = async (): Promise<Blob | null> => {
         const canvas = canvasRef.current?.getCanvas();
         if (!canvas) return null;
         
@@ -848,22 +894,85 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         await new Promise(resolve => requestAnimationFrame(resolve));
         await new Promise(resolve => requestAnimationFrame(resolve));
         
-        // Create square crop
-        const height = canvas.height;
-        const width = canvas.width;
-        const size = Math.min(width, height);
+        const sourceWidth = canvas.width;
+        const sourceHeight = canvas.height;
+        
+        let cropWidth: number, cropHeight: number, cropX: number, cropY: number;
+        
+        // Calculate crop dimensions based on aspect ratio
+        switch (aspectRatio) {
+          case 'square':
+            const size = Math.min(sourceWidth, sourceHeight);
+            cropWidth = cropHeight = size;
+            cropX = (sourceWidth - size) / 2;
+            cropY = (sourceHeight - size) / 2;
+            break;
+          case 'landscape':
+            // 16:9 aspect ratio
+            if (sourceWidth / sourceHeight > 16/9) {
+              cropHeight = sourceHeight;
+              cropWidth = cropHeight * (16/9);
+              cropX = (sourceWidth - cropWidth) / 2;
+              cropY = 0;
+            } else {
+              cropWidth = sourceWidth;
+              cropHeight = cropWidth / (16/9);
+              cropX = 0;
+              cropY = (sourceHeight - cropHeight) / 2;
+            }
+            break;
+          case 'portrait':
+            // 9:16 aspect ratio
+            if (sourceWidth / sourceHeight > 9/16) {
+              cropHeight = sourceHeight;
+              cropWidth = cropHeight * (9/16);
+              cropX = (sourceWidth - cropWidth) / 2;
+              cropY = 0;
+            } else {
+              cropWidth = sourceWidth;
+              cropHeight = cropWidth / (9/16);
+              cropX = 0;
+              cropY = (sourceHeight - cropHeight) / 2;
+            }
+            break;
+          case 'instagram_story':
+            // 9:16 aspect ratio (1080x1920)
+            if (sourceWidth / sourceHeight > 9/16) {
+              cropHeight = sourceHeight;
+              cropWidth = cropHeight * (9/16);
+              cropX = (sourceWidth - cropWidth) / 2;
+              cropY = 0;
+            } else {
+              cropWidth = sourceWidth;
+              cropHeight = cropWidth / (9/16);
+              cropX = 0;
+              cropY = (sourceHeight - cropHeight) / 2;
+            }
+            break;
+          case 'instagram_post':
+            // 4:5 aspect ratio (1080x1350)
+            if (sourceWidth / sourceHeight > 4/5) {
+              cropHeight = sourceHeight;
+              cropWidth = cropHeight * (4/5);
+              cropX = (sourceWidth - cropWidth) / 2;
+              cropY = 0;
+            } else {
+              cropWidth = sourceWidth;
+              cropHeight = cropWidth / (4/5);
+              cropX = 0;
+              cropY = (sourceHeight - cropHeight) / 2;
+            }
+            break;
+        }
         
         const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = size;
-        cropCanvas.height = size;
+        cropCanvas.width = cropWidth;
+        cropCanvas.height = cropHeight;
         const cropCtx = cropCanvas.getContext('2d');
         
         if (!cropCtx) return null;
         
-        const cropX = (width - size) / 2;
-        const cropY = (height - size) / 2;
-        
-        cropCtx.drawImage(canvas, cropX, cropY, size, size, 0, 0, size, size);
+        cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
         
         // Convert to blob
         return new Promise((resolve) => {
@@ -887,6 +996,9 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       
       // Helper function to wait for render and update progress
       const waitForRender = (phase: string, progress: number) => {
+        if (abortSignal?.aborted) {
+          throw new Error('Movie creation was aborted');
+        }
         if (onProgress) {
           onProgress(progress, phase);
         }
@@ -894,46 +1006,69 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         const waitTime = phase.includes('Separation') ? 200 : 100;
         return new Promise(resolve => setTimeout(resolve, waitTime));
       };
+
+      // Store initial camera position for rotation
+      let initialCameraPosition: THREE.Vector3 | null = null;
+      
+      // Helper function to apply rotation if enabled
+      const applyRotation = (rotationProgress: number) => {
+        if (showRotation && rotations > 0 && scene && camera) {
+          // Store initial camera position on first call
+          if (!initialCameraPosition) {
+            initialCameraPosition = camera.position.clone();
+          }
+          
+          // Calculate rotation based on the specified number of rotations
+          const totalRotation = rotations * 2 * Math.PI; // Convert rotations to radians
+          const currentRotation = rotationProgress * totalRotation;
+          
+          // Get the pivot point from the recomputed hull centroid
+          const pivot = pieceSpacingData?.pivot || new THREE.Vector3(0, 0, 0);
+          
+          // Rotate the scene around the pivot, not the camera
+          scene.rotation.y = currentRotation;
+          
+          // Keep camera position and target fixed
+          camera.position.copy(initialCameraPosition);
+          camera.lookAt(pivot);
+        }
+      };
       
       // Store original state
       const originalMaxPlacements = maxPlacements;
       const originalSpacing = pieceSpacing;
       
       try {
-        // Phase 1: Show full solution (static) - 5%
-        for (let i = 0; i < phase1Frames; i++) {
-          const progress = (frameIndex / totalFrames) * 100;
-          await waitForRender('Phase 1: Static Full Solution', progress);
-          
-          const frameBlob = await captureSquareFrame();
-          if (frameBlob) {
-            const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
-            frameFiles.push({ name: filename, blob: frameBlob });
-            await saveFrameToDirectory(frameBlob, filename);
-          }
-          frameIndex++;
-        }
-        
-        // Phase 2: Placement animation max-to-min (if enabled) - 20%
-        if (showPlacement && solution.placements) {
-          for (let i = 0; i < phase2Frames; i++) {
-            const progress = i / (phase2Frames - 1);
-            const easedProgress = easeInOut(progress);
+        // Phase 1: Placement Animation (if enabled) - Full to None to Full
+        if (showPlacement && solution.placements && placementFrames > 0) {
+          for (let i = 0; i < placementFrames; i++) {
+            const progress = i / (placementFrames - 1);
+            let targetPlacement: number;
             
-            // Animate from max to min placements with fractional values for smooth transitions
-            const targetPlacement = solution.placements.length * (1 - easedProgress);
+            // Create a full-to-none-to-full animation cycle
+            if (progress <= 0.5) {
+              // First half: full to none (1.0 to 0.0)
+              const halfProgress = progress * 2; // 0 to 1
+              const easedProgress = easeInOut(halfProgress);
+              targetPlacement = solution.placements.length * (1 - easedProgress);
+            } else {
+              // Second half: none to full (0.0 to 1.0)
+              const halfProgress = (progress - 0.5) * 2; // 0 to 1
+              const easedProgress = easeInOut(halfProgress);
+              targetPlacement = solution.placements.length * easedProgress;
+            }
             
             // Update both callback and internal state
             if (onMaxPlacementsChange) {
               onMaxPlacementsChange(targetPlacement);
             }
             // Override the maxPlacements for movie creation
-            setMovieOverrides(prev => ({ ...prev, maxPlacements: targetPlacement }));
+            setMovieOverrides({ maxPlacements: targetPlacement, pieceSpacing: originalSpacing });
             
             const overallProgress = (frameIndex / totalFrames) * 100;
-            await waitForRender('Phase 2: Placement Max-to-Min', overallProgress);
+            await waitForRender('Placement Animation', overallProgress);
             
-            const frameBlob = await captureSquareFrame();
+            const frameBlob = await captureFrame();
             if (frameBlob) {
               const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
               frameFiles.push({ name: filename, blob: frameBlob });
@@ -943,69 +1078,36 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
           }
         }
         
-        // Phase 3: Placement animation min-to-max (if enabled) - 20%
-        if (showPlacement && solution.placements) {
-          for (let i = 0; i < phase3Frames; i++) {
-            const progress = i / (phase3Frames - 1);
-            const easedProgress = easeInOut(progress);
+        // Phase 2: Separation Animation (if enabled) - None to Full to None
+        if (showSeparation && separationFrames > 0) {
+          for (let i = 0; i < separationFrames; i++) {
+            const progress = i / (separationFrames - 1);
+            let targetSpacing: number;
             
-            // Animate from min to max placements with fractional values for smooth transitions
-            const targetPlacement = solution.placements.length * easedProgress;
-            
-            // Update both callback and internal state
-            if (onMaxPlacementsChange) {
-              onMaxPlacementsChange(targetPlacement);
+            // Create a none-to-full-to-none animation cycle
+            if (progress <= 0.5) {
+              // First half: none to full (1.0 to 2.0)
+              const halfProgress = progress * 2; // 0 to 1
+              const easedProgress = easeInOut(halfProgress);
+              targetSpacing = 1.0 + easedProgress; // 1.0 to 2.0
+            } else {
+              // Second half: full to none (2.0 to 1.0)
+              const halfProgress = (progress - 0.5) * 2; // 0 to 1
+              const easedProgress = easeInOut(halfProgress);
+              targetSpacing = 2.0 - easedProgress; // 2.0 to 1.0
             }
-            // Override the maxPlacements for movie creation
-            setMovieOverrides(prev => ({ ...prev, maxPlacements: targetPlacement }));
-            
-            const overallProgress = (frameIndex / totalFrames) * 100;
-            await waitForRender('Phase 3: Placement Min-to-Max', overallProgress);
-            
-            const frameBlob = await captureSquareFrame();
-            if (frameBlob) {
-              const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
-              frameFiles.push({ name: filename, blob: frameBlob });
-              await saveFrameToDirectory(frameBlob, filename);
-            }
-            frameIndex++;
-          }
-        }
-        
-        // Phase 4: Show full solution again (static) - 5%
-        for (let i = 0; i < phase4Frames; i++) {
-          const progress = (frameIndex / totalFrames) * 100;
-          await waitForRender('Phase 4: Static Full Solution', progress);
-          
-          const frameBlob = await captureSquareFrame();
-          if (frameBlob) {
-            const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
-            frameFiles.push({ name: filename, blob: frameBlob });
-            await saveFrameToDirectory(frameBlob, filename);
-          }
-          frameIndex++;
-        }
-        
-        // Phase 5: Separation animation min-to-max (if enabled) - 20%
-        if (showSeparation) {
-          for (let i = 0; i < phase5Frames; i++) {
-            const progress = i / (phase5Frames - 1);
-            const easedProgress = easeInOut(progress);
-            
-            // Animate spacing from 1.0 to 2.0
-            const animatedSpacing = 1.0 + easedProgress * 1.0;
             
             // Update both callback and internal state
             if (onPieceSpacingChange) {
-              onPieceSpacingChange(animatedSpacing);
+              onPieceSpacingChange(targetSpacing);
             }
             // Override the pieceSpacing for movie creation
-            setMovieOverrides(prev => ({ ...prev, pieceSpacing: animatedSpacing }));
+            setMovieOverrides({ maxPlacements: originalMaxPlacements, pieceSpacing: targetSpacing });
             
             const overallProgress = (frameIndex / totalFrames) * 100;
-            await waitForRender('Phase 5: Separation Min-to-Max', overallProgress);
+            await waitForRender('Separation Animation', overallProgress);
             
-            const frameBlob = await captureSquareFrame();
+            const frameBlob = await captureFrame();
             if (frameBlob) {
               const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
               frameFiles.push({ name: filename, blob: frameBlob });
@@ -1015,26 +1117,16 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
           }
         }
         
-        // Phase 6: Separation animation max-to-min (if enabled) - 20%
-        if (showSeparation) {
-          for (let i = 0; i < phase6Frames; i++) {
-            const progress = i / (phase6Frames - 1);
-            const easedProgress = easeInOut(progress);
-            
-            // Animate spacing from 2.0 to 1.0
-            const animatedSpacing = 2.0 - easedProgress * 1.0;
-            
-            // Update both callback and internal state
-            if (onPieceSpacingChange) {
-              onPieceSpacingChange(animatedSpacing);
-            }
-            // Override the pieceSpacing for movie creation
-            setMovieOverrides(prev => ({ ...prev, pieceSpacing: animatedSpacing }));
+        // Phase 3: Rotation Animation (if enabled) - Sequential after placement and separation
+        if (showRotation && rotationFrames > 0) {
+          for (let i = 0; i < rotationFrames; i++) {
+            const rotationProgress = i / (rotationFrames - 1); // 0 to 1 over rotation frames
+            applyRotation(rotationProgress);
             
             const overallProgress = (frameIndex / totalFrames) * 100;
-            await waitForRender('Phase 6: Separation Max-to-Min', overallProgress);
+            await waitForRender('Rotation Animation', overallProgress);
             
-            const frameBlob = await captureSquareFrame();
+            const frameBlob = await captureFrame();
             if (frameBlob) {
               const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
               frameFiles.push({ name: filename, blob: frameBlob });
@@ -1042,20 +1134,6 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
             }
             frameIndex++;
           }
-        }
-        
-        // Phase 7: Show final state (static) - 10%
-        for (let i = 0; i < phase7Frames; i++) {
-          const progress = (frameIndex / totalFrames) * 100;
-          await waitForRender('Phase 7: Final State', progress);
-          
-          const frameBlob = await captureSquareFrame();
-          if (frameBlob) {
-            const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
-            frameFiles.push({ name: filename, blob: frameBlob });
-            await saveFrameToDirectory(frameBlob, filename);
-          }
-          frameIndex++;
         }
         
         // Create movie from frames and save to directory
@@ -1071,6 +1149,17 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
             await movieWritable.write(movieBlob);
             await movieWritable.close();
             console.log(`Movie saved as: ${movieFilename}`);
+            
+            // Clean up: Remove all frame images from directory after movie creation
+            for (const frameFile of frameFiles) {
+              try {
+                await directoryHandle.removeEntry(frameFile.name);
+                console.log(`Removed frame: ${frameFile.name}`);
+              } catch (removeErr) {
+                console.warn(`Failed to remove frame ${frameFile.name}:`, removeErr);
+              }
+            }
+            console.log('All frame images cleaned up from directory');
           } catch (err) {
             console.error('Failed to save movie file:', err);
           }
@@ -1079,7 +1168,10 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         return movieBlob;
         
       } finally {
-        // Reset to original state
+        // Reset to original state including scene rotation
+        if (scene) {
+          scene.rotation.y = 0;
+        }
         setMovieOverrides(null);
         if (onMaxPlacementsChange) {
           onMaxPlacementsChange(originalMaxPlacements);
@@ -1092,8 +1184,8 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
   }), [solution]);
 
   return (
-    <div style={{ width: '100%', height: '100vh', border: '1px solid var(--border)', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-      <div style={{ width: 'calc(100vh * 9 / 16)', height: '100vh', maxWidth: '100%' }}>
+    <div style={{ width: '100%', height: '100%', border: '1px solid var(--border)', borderRadius: '8px' }}>
+      <div style={{ width: '100%', height: '100%' }}>
         <ThreeCanvas ref={canvasRef} onReady={handleThreeReady}>
         {scene && pieceGroups.length > 0 && (
           <>
