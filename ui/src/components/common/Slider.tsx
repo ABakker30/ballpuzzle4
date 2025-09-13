@@ -9,6 +9,7 @@ interface SliderProps {
   width?: string;
   label?: string;
   formatValue?: (value: number) => string;
+  title?: string;
 }
 
 export const Slider: React.FC<SliderProps> = ({
@@ -19,7 +20,8 @@ export const Slider: React.FC<SliderProps> = ({
   onChange,
   width = '150px',
   label,
-  formatValue
+  formatValue,
+  title
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const sliderRef = useRef<HTMLDivElement>(null);
@@ -86,6 +88,7 @@ export const Slider: React.FC<SliderProps> = ({
         gap: '8px',
         userSelect: 'none'
       }}
+      title={title}
     >
       {label && <span>{label}:</span>}
       

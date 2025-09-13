@@ -1,19 +1,70 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ThreeCanvas, ThreeCanvasRef } from '../3d/ThreeCanvas';
-import { InstancedSpheres } from '../3d/InstancedSpheres';
-import { InstancedBonds } from '../3d/InstancedBonds';
-import { engineToWorldInt, worldToEngineInt, getDirectNeighbors, keyW } from '../../lib/lattice';
-import { SolutionJson, Placement } from '../../types/solution';
-import { GeometryProcessor, OrientationResult } from '../../lib/geometryProcessor';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 import * as THREE from 'three';
+import { ThreeCanvas, ThreeCanvasRef } from '../3d/ThreeCanvas';
+import { UnifiedPiece } from '../3d/UnifiedPiece';
+import { SolutionJson, Placement } from '../../types/solution';
+import { fccToWorld, pieceColor, keyW, getDirectNeighbors } from '../../lib/fcc';
+import { GeometryProcessor, OrientationResult } from '../../lib/geometryProcessor';
 
 interface SolutionViewer3DProps {
   solution: SolutionJson | null;
-  maxPlacements?: number;
+  maxPlacements: number;
   brightness?: number;
   orientToSurface?: boolean;
   resetTrigger?: number;
+  pieceSpacing?: number;
+  onMaxPlacementsChange?: (value: number) => void;
+  onPieceSpacingChange?: (value: number) => void;
 }
+
+export interface SolutionViewer3DRef {
+  takeScreenshot: () => Promise<string>;
+  createMovie: (duration: number, showPlacement: boolean, showSeparation: boolean, onProgress?: (progress: number, phase: string) => void) => Promise<Blob>;
+}
+
+// MPEG creation function using Web APIs
+const createMPEGFromFrames = async (frameFiles: { name: string; blob: Blob }[], fps: number): Promise<Blob> => {
+  // For browser-based MPEG creation, we'll use a simple approach
+  // In a real implementation, you might use FFmpeg.wasm or similar
+  
+  // Create a ZIP file containing all frames and metadata
+  const zipContent: { [filename: string]: Blob } = {};
+  
+  // Add all frame files
+  frameFiles.forEach(frame => {
+    zipContent[frame.name] = frame.blob;
+  });
+  
+  // Add metadata file for video conversion
+  const metadata = {
+    fps,
+    frameCount: frameFiles.length,
+    format: 'png',
+    instructions: 'Use ffmpeg to convert: ffmpeg -framerate ' + fps + ' -i frame_%06d.png -c:v mpeg1video output.mpg'
+  };
+  
+  zipContent['metadata.json'] = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+  zipContent['convert.bat'] = new Blob([`ffmpeg -framerate ${fps} -i frame_%06d.png -c:v mpeg1video -q:v 2 movie.mpg`], { type: 'text/plain' });
+  zipContent['convert.sh'] = new Blob([`#!/bin/bash\nffmpeg -framerate ${fps} -i frame_%06d.png -c:v mpeg1video -q:v 2 movie.mpg`], { type: 'text/plain' });
+  
+  // Create a simple ZIP-like structure (for demonstration)
+  // In production, you'd use a proper ZIP library or FFmpeg.wasm
+  const combinedData = Object.entries(zipContent).map(([name, blob]) => ({
+    name,
+    size: blob.size,
+    type: blob.type
+  }));
+  
+  const result = new Blob([JSON.stringify({
+    type: 'movie-frames-package',
+    frames: frameFiles.length,
+    fps,
+    files: combinedData,
+    note: 'This package contains video frames. Use FFmpeg or similar tool to create MPEG video.'
+  }, null, 2)], { type: 'application/json' });
+  
+  return result;
+};
 
 // Generate PBR paint colors for pieces A-Z - professional paint palette
 const generatePieceColors = (): Record<string, string> => {
@@ -59,25 +110,29 @@ const generatePieceColors = (): Record<string, string> => {
 
 const PIECE_COLORS = generatePieceColors();
 
-export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({ 
-  solution, 
-  maxPlacements = Infinity,
+export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3DProps>(({
+  solution,
+  maxPlacements,
   brightness = 1.0,
   orientToSurface = false,
-  resetTrigger = 0
-}) => {
+  resetTrigger,
+  pieceSpacing = 1.0,
+  onMaxPlacementsChange,
+  onPieceSpacingChange
+}, ref) => {
   const canvasRef = useRef<ThreeCanvasRef>(null);
-  const [sphereGroups, setSphereGroups] = useState<Array<{
-    positions: Float32Array;
-    colors: Float32Array;
+  const [pieceGroups, setPieceGroups] = useState<Array<{
     piece: string;
-    radius: number;
-  }>>([]);
-  const [bondGroups, setBondGroups] = useState<Array<{
-    positions: Float32Array;
-    colors: Float32Array;
-    piece: string;
-    radius: number;
+    spheres: {
+      positions: Float32Array;
+      colors: Float32Array;
+      radius: number;
+    };
+    bonds: {
+      positions: Float32Array;
+      colors: Float32Array;
+      radius: number;
+    };
   }>>([]);
   const [scene, setScene] = useState<THREE.Scene | null>(null);
   const [camera, setCamera] = useState<THREE.Camera | null>(null);
@@ -86,6 +141,17 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
   const [originalTransform, setOriginalTransform] = useState<{
     position: THREE.Vector3;
     rotation: THREE.Quaternion;
+  } | null>(null);
+  const [movieOverrides, setMovieOverrides] = useState<{
+    maxPlacements?: number;
+    pieceSpacing?: number;
+  } | null>(null);
+  const [pieceSpacingData, setPieceSpacingData] = useState<{
+    pieceCentroids: Record<string, THREE.Vector3>;
+    pieceDirections: Record<string, THREE.Vector3>;
+    maxRadius: number;
+    pivot: THREE.Vector3;
+    sphereDiameter: number;
   } | null>(null);
   const geometryProcessor = new GeometryProcessor();
 
@@ -119,26 +185,124 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
     console.log('SolutionViewer3D: Applied brightness multiplier:', brightness);
   }, [scene, brightness]); // Include scene to apply brightness when scene is first ready
 
+  // Calculate piece spacing data when solution changes
+  useEffect(() => {
+    if (!solution || !solution.placements || pieceGroups.length === 0) {
+      setPieceSpacingData(null);
+      return;
+    }
+
+    // Calculate piece centroids and directions
+    const pieceCentroids: Record<string, THREE.Vector3> = {};
+    const pieceDirections: Record<string, THREE.Vector3> = {};
+    const pieceSphereCount: Record<string, number> = {};
+
+    // Group placements by piece and calculate centroids
+    solution.placements.forEach((placement: Placement) => {
+      const piece = placement.piece;
+      if (!pieceCentroids[piece]) {
+        pieceCentroids[piece] = new THREE.Vector3(0, 0, 0);
+        pieceSphereCount[piece] = 0;
+      }
+
+      // Extract coordinates from placement - handle different formats
+      let coordinates: number[][] = [];
+      
+      if (placement.coordinates) {
+        coordinates = placement.coordinates;
+      } else if ((placement as any).cells_ijk) {
+        coordinates = (placement as any).cells_ijk;
+      } else if (placement.i !== undefined && placement.j !== undefined && placement.k !== undefined) {
+        coordinates = [[placement.i, placement.j, placement.k]];
+      }
+
+      // Add all coordinates for this piece to centroid calculation
+      coordinates.forEach(coord => {
+        const worldCoords = fccToWorld(coord[0], coord[1], coord[2]);
+        pieceCentroids[piece].add(new THREE.Vector3(worldCoords.x, worldCoords.y, worldCoords.z));
+        pieceSphereCount[piece]++;
+      });
+    });
+
+    // Average to get true centroids
+    Object.keys(pieceCentroids).forEach(piece => {
+      pieceCentroids[piece].divideScalar(pieceSphereCount[piece]);
+      console.log(`Piece ${piece} centroid: [${pieceCentroids[piece].x.toFixed(3)}, ${pieceCentroids[piece].y.toFixed(3)}, ${pieceCentroids[piece].z.toFixed(3)}] (${pieceSphereCount[piece]} spheres)`);
+    });
+
+    // Use hull centroid as pivot (from orientation result) or calculate from all spheres
+    let pivot = new THREE.Vector3(0, 0, 0);
+    if (orientationResult) {
+      pivot = orientationResult.hullCentroid.clone();
+    } else {
+      // Calculate centroid of all spheres
+      let totalSpheres = 0;
+      Object.keys(pieceCentroids).forEach(piece => {
+        pivot.add(pieceCentroids[piece].clone().multiplyScalar(pieceSphereCount[piece]));
+        totalSpheres += pieceSphereCount[piece];
+      });
+      pivot.divideScalar(totalSpheres);
+    }
+
+    // Calculate baseline vectors (v_i = c_i - p) and max radius
+    let maxRadius = 0;
+    console.log('SolutionViewer3D: Calculating baseline vectors from pivot:', pivot.toArray());
+    Object.keys(pieceCentroids).forEach(piece => {
+      const centroid = pieceCentroids[piece];
+      const baselineVector = centroid.clone().sub(pivot); // v_i = c_i - p
+      const radius = baselineVector.length();
+      
+      console.log(`Piece ${piece}: centroid=[${centroid.x.toFixed(3)}, ${centroid.y.toFixed(3)}, ${centroid.z.toFixed(3)}], baseline=[${baselineVector.x.toFixed(3)}, ${baselineVector.y.toFixed(3)}, ${baselineVector.z.toFixed(3)}], radius=${radius.toFixed(3)}`);
+      
+      if (radius > 0.001) { // Avoid pieces at pivot
+        pieceDirections[piece] = baselineVector; // Store full baseline vector, not normalized
+        maxRadius = Math.max(maxRadius, radius);
+      } else {
+        pieceDirections[piece] = new THREE.Vector3(0, 0, 0); // No-move marker
+        console.log(`Piece ${piece}: marked as no-move (at pivot)`);
+      }
+    });
+
+    // Calculate sphere diameter (2 * radius)
+    const sphereDiameter = pieceGroups.length > 0 ? pieceGroups[0].spheres.radius * 2 : 0.6;
+
+    setPieceSpacingData({
+      pieceCentroids,
+      pieceDirections,
+      maxRadius,
+      pivot,
+      sphereDiameter
+    });
+
+    console.log('SolutionViewer3D: Calculated piece spacing data:', {
+      pieceCount: Object.keys(pieceCentroids).length,
+      maxRadius,
+      sphereDiameter,
+      pivot: pivot.toArray()
+    });
+  }, [solution, pieceGroups, orientationResult]);
+
   useEffect(() => {
     if (!solution || !solution.placements) {
       console.log('SolutionViewer3D: No solution or placements');
-      setSphereGroups([]);
+      setPieceGroups([]);
       return;
     }
 
     console.log('SolutionViewer3D: Processing solution with', solution.placements.length, 'placements');
-    const pieceGroups: Record<string, Array<{ x: number; y: number; z: number }>> = {};
+    const pieceCells: Record<string, Array<{ x: number; y: number; z: number }>> = {};
     const allWorldCells: Array<{ x: number; y: number; z: number }> = [];
     
-    const placementsToShow = solution.placements.slice(0, maxPlacements);
+    const effectiveMaxPlacements = movieOverrides?.maxPlacements ?? maxPlacements;
+    const placementsToShow = solution.placements.slice(0, effectiveMaxPlacements);
     console.log('SolutionViewer3D: Showing', placementsToShow.length, 'placements');
     
     for (const placement of placementsToShow) {
       const piece = placement.piece;
       console.log('SolutionViewer3D: Processing piece', piece, placement);
       
-      if (!pieceGroups[piece]) {
-        pieceGroups[piece] = [];
+      if (!pieceCells[piece]) {
+        pieceCells[piece] = [];
       }
       
       // Extract coordinates from placement
@@ -169,15 +333,15 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
       console.log('SolutionViewer3D: Converting coordinates for piece', piece, ':', coordinates);
       for (const coord of coordinates) {
         const [i, j, k] = coord;
-        const worldCell = engineToWorldInt(i, j, k);
-        console.log('SolutionViewer3D: Engine coord [', i, j, k, '] -> World coord [', worldCell.X, worldCell.Y, worldCell.Z, ']');
+        const worldCell = fccToWorld(i, j, k);
+        console.log('SolutionViewer3D: Engine coord [', i, j, k, '] -> World coord [', worldCell.x, worldCell.y, worldCell.z, ']');
         if (worldCell) {
           const worldPos = {
-            x: worldCell.X,
-            y: worldCell.Y,
-            z: worldCell.Z
+            x: worldCell.x,
+            y: worldCell.y,
+            z: worldCell.z
           };
-          pieceGroups[piece].push(worldPos);
+          pieceCells[piece].push(worldPos);
           allWorldCells.push(worldPos);
         }
       }
@@ -198,7 +362,7 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
         const worldCell = { X: cell.x, Y: cell.y, Z: cell.z };
         const neighbors = getDirectNeighbors(worldCell);
         
-        neighbors.forEach(neighbor => {
+        neighbors.forEach((neighbor: { X: number; Y: number; Z: number }) => {
           const neighborKey = keyW(neighbor.X, neighbor.Y, neighbor.Z);
           
           // If this neighbor exists in our piece, create a bond
@@ -222,12 +386,14 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
       return bonds;
     };
 
-    // Convert to sphere groups and bond groups
-    console.log('SolutionViewer3D: Final piece groups:', pieceGroups);
-    const groups = Object.entries(pieceGroups).map(([piece, cells]) => {
-      console.log('SolutionViewer3D: Creating sphere group for piece', piece, 'with', cells.length, 'spheres');
-      const positions = new Float32Array(cells.length * 3);
-      const colors = new Float32Array(cells.length * 3);
+    // Convert to unified piece groups with both spheres and bonds
+    console.log('SolutionViewer3D: Final piece cells:', pieceCells);
+    const unifiedGroups = Object.entries(pieceCells).map(([piece, cells]) => {
+      console.log('SolutionViewer3D: Creating unified group for piece', piece, 'with', cells.length, 'spheres');
+      
+      // Create sphere data
+      const spherePositions = new Float32Array(cells.length * 3);
+      const sphereColors = new Float32Array(cells.length * 3);
       
       const hexColor = PIECE_COLORS[piece] || '#888888';
       const color = new THREE.Color(hexColor);
@@ -235,94 +401,123 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
       console.log(`SolutionViewer3D: Piece ${piece} using color ${hexColor}, THREE.Color:`, color);
       
       cells.forEach((cell, i) => {
-        positions[i * 3] = cell.x;
-        positions[i * 3 + 1] = cell.y;
-        positions[i * 3 + 2] = cell.z;
+        spherePositions[i * 3] = cell.x;
+        spherePositions[i * 3 + 1] = cell.y;
+        spherePositions[i * 3 + 2] = cell.z;
         
-        colors[i * 3] = color.r;
-        colors[i * 3 + 1] = color.g;
-        colors[i * 3 + 2] = color.b;
+        sphereColors[i * 3] = color.r;
+        sphereColors[i * 3 + 1] = color.g;
+        sphereColors[i * 3 + 2] = color.b;
       });
       
-      // Debug: log the actual RGB values being set
-      console.log(`SolutionViewer3D: Piece ${piece} RGB values:`, [color.r, color.g, color.b]);
-      return { positions, colors, piece };
-    });
-    
-    // Create bond groups for each piece
-    const bonds = Object.entries(pieceGroups).map(([piece, cells]) => {
+      // Create bond data
       const adjacentBonds = findAdjacentCells(cells);
       console.log(`SolutionViewer3D: Found ${adjacentBonds.length} bonds for piece ${piece}`);
       
-      if (adjacentBonds.length === 0) {
-        return { positions: new Float32Array(0), colors: new Float32Array(0), piece };
+      let bondPositions = new Float32Array(0);
+      let bondColors = new Float32Array(0);
+      
+      if (adjacentBonds.length > 0) {
+        bondPositions = new Float32Array(adjacentBonds.length * 6); // 2 points per bond
+        bondColors = new Float32Array(adjacentBonds.length * 3); // 1 color per bond
+        
+        adjacentBonds.forEach((bond, i) => {
+          // Store start and end positions for each bond
+          bondPositions[i * 6] = bond.start.x;
+          bondPositions[i * 6 + 1] = bond.start.y;
+          bondPositions[i * 6 + 2] = bond.start.z;
+          bondPositions[i * 6 + 3] = bond.end.x;
+          bondPositions[i * 6 + 4] = bond.end.y;
+          bondPositions[i * 6 + 5] = bond.end.z;
+          
+          // Store color for each bond
+          bondColors[i * 3] = color.r;
+          bondColors[i * 3 + 1] = color.g;
+          bondColors[i * 3 + 2] = color.b;
+        });
       }
       
-      const bondPositions = new Float32Array(adjacentBonds.length * 6); // 2 points per bond
-      const bondColors = new Float32Array(adjacentBonds.length * 3); // 1 color per bond
+      // Debug: log the actual RGB values being set
+      console.log(`SolutionViewer3D: Piece ${piece} RGB values:`, [color.r, color.g, color.b]);
       
-      const hexColor = PIECE_COLORS[piece] || '#888888';
-      const color = new THREE.Color(hexColor);
-      
-      adjacentBonds.forEach((bond, i) => {
-        // Store start and end positions for each bond
-        bondPositions[i * 6] = bond.start.x;
-        bondPositions[i * 6 + 1] = bond.start.y;
-        bondPositions[i * 6 + 2] = bond.start.z;
-        bondPositions[i * 6 + 3] = bond.end.x;
-        bondPositions[i * 6 + 4] = bond.end.y;
-        bondPositions[i * 6 + 5] = bond.end.z;
-        
-        // Store color for each bond
-        bondColors[i * 3] = color.r;
-        bondColors[i * 3 + 1] = color.g;
-        bondColors[i * 3 + 2] = color.b;
-      });
-      
-      return { positions: bondPositions, colors: bondColors, piece };
+      return {
+        piece,
+        spheres: {
+          positions: spherePositions,
+          colors: sphereColors,
+          radius: 0.3 // Will be updated after calculation
+        },
+        bonds: {
+          positions: bondPositions,
+          colors: bondColors,
+          radius: 0.1 // Will be updated after calculation
+        }
+      };
     });
     
-    // Calculate optimal sphere radius based on minimum distance between world cells
+    // Calculate optimal sphere radius: distance between two points of a piece / 2 in world view
     let optimalRadius = 0.3; // default
-    if (allWorldCells.length >= 2) {
-      let minDistance = Infinity;
-      console.log('SolutionViewer3D: All world cells for distance calculation:', allWorldCells);
-      
-      for (let i = 0; i < allWorldCells.length; i++) {
-        for (let j = i + 1; j < allWorldCells.length; j++) {
-          const dx = allWorldCells[i].x - allWorldCells[j].x;
-          const dy = allWorldCells[i].y - allWorldCells[j].y;
-          const dz = allWorldCells[i].z - allWorldCells[j].z;
-          const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          console.log(`SolutionViewer3D: Distance between [${allWorldCells[i].x},${allWorldCells[i].y},${allWorldCells[i].z}] and [${allWorldCells[j].x},${allWorldCells[j].y},${allWorldCells[j].z}] = ${distance}`);
-          
-          if (distance < minDistance && distance > 0) {
-            minDistance = distance;
+    
+    // Find minimum distance between any two world cells within the same piece
+    let minPieceDistance = Infinity;
+    
+    unifiedGroups.forEach(group => {
+      const sphereCount = group.spheres.positions.length / 3;
+      if (sphereCount >= 2) {
+        for (let i = 0; i < sphereCount; i++) {
+          for (let j = i + 1; j < sphereCount; j++) {
+            const x1 = group.spheres.positions[i * 3];
+            const y1 = group.spheres.positions[i * 3 + 1];
+            const z1 = group.spheres.positions[i * 3 + 2];
+            
+            const x2 = group.spheres.positions[j * 3];
+            const y2 = group.spheres.positions[j * 3 + 1];
+            const z2 = group.spheres.positions[j * 3 + 2];
+            
+            const dx = x1 - x2;
+            const dy = y1 - y2;
+            const dz = z1 - z2;
+            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            
+            if (distance < minPieceDistance && distance > 0) {
+              minPieceDistance = distance;
+              console.log(`SolutionViewer3D: Found min distance ${distance} between points in piece ${group.piece}`);
+            }
           }
         }
       }
-      
-      // For FCC lattice, nearest neighbors should be at distance sqrt(2) ≈ 1.414
-      // Use 50% of minimum distance so spheres touch but don't overlap
-      optimalRadius = Math.max(0.1, minDistance * 0.5);
-      console.log('SolutionViewer3D: Calculated optimal radius:', optimalRadius, 'from min distance:', minDistance);
-      console.log('SolutionViewer3D: Expected FCC nearest neighbor distance should be ~1.414 for unit lattice');
-      console.log('SolutionViewer3D: Using 50% of min distance so spheres touch exactly');
+    });
+    
+    if (minPieceDistance !== Infinity) {
+      // Sphere radius = distance between two points of a piece / 2
+      optimalRadius = minPieceDistance / 2;
+      console.log('SolutionViewer3D: Calculated sphere radius:', optimalRadius, 'from min piece distance:', minPieceDistance);
+    } else {
+      console.log('SolutionViewer3D: No valid piece distances found, using default radius:', optimalRadius);
     }
 
+    // Update sphere and bond radii with calculated values
+    unifiedGroups.forEach(group => {
+      group.spheres.radius = optimalRadius;
+      group.bonds.radius = optimalRadius * 0.3;
+    });
+
     // Add radius to all groups
-    const groupsWithRadius = groups.map(group => ({ ...group, radius: optimalRadius }));
-    const bondsWithRadius = bonds.map(group => ({ ...group, radius: optimalRadius }));
+    const groupsWithRadius = unifiedGroups.map(group => ({ ...group, radius: optimalRadius }));
     
-    console.log('SolutionViewer3D: Setting sphere groups:', groupsWithRadius);
-    console.log('SolutionViewer3D: Setting bond groups:', bondsWithRadius);
-    setSphereGroups(groupsWithRadius);
-    setBondGroups(bondsWithRadius);
+    console.log('SolutionViewer3D: Setting unified piece groups:', groupsWithRadius);
+    console.log('SolutionViewer3D: First group spheres data:', groupsWithRadius[0]?.spheres);
+    console.log('SolutionViewer3D: First group bonds data:', groupsWithRadius[0]?.bonds);
+    setPieceGroups(groupsWithRadius);
 
     // Compute orientation if enabled
     if (orientToSurface && groupsWithRadius.length > 0) {
       try {
-        const result = geometryProcessor.computeRestOrientation(groupsWithRadius);
+        // Convert unified groups to format expected by geometryProcessor
+        const sphereGroupsForOrientation = groupsWithRadius.map(group => ({
+          positions: group.spheres.positions
+        }));
+        const result = geometryProcessor.computeRestOrientation(sphereGroupsForOrientation);
         setOrientationResult(result);
         console.log('SolutionViewer3D: Computed orientation result:', result);
       } catch (error) {
@@ -332,13 +527,15 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
     } else {
       setOrientationResult(null);
     }
-  }, [solution, maxPlacements, orientToSurface]);
+  }, [solution, maxPlacements, orientToSurface, movieOverrides]);
 
   // Separate effect for initial camera positioning - only runs when solution changes
   useEffect(() => {
     if (!solution || !solution.placements || cameraInitialized || !canvasRef.current) {
       return;
     }
+
+    console.log('SolutionViewer3D: Camera initialization triggered - this should only happen on solution load');
 
     // Calculate bounds from full solution (not filtered by maxPlacements)
     const bounds = new THREE.Box3();
@@ -353,8 +550,8 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
       const coordinates = placement.cells_ijk || [];
       for (const coord of coordinates) {
         const [i, j, k] = coord;
-        const worldCell = engineToWorldInt(i, j, k);
-        bounds.expandByPoint(new THREE.Vector3(worldCell.X, worldCell.Y, worldCell.Z));
+        const worldCell = fccToWorld(i, j, k);
+        bounds.expandByPoint(new THREE.Vector3(worldCell.x, worldCell.y, worldCell.z));
       }
     }
     
@@ -443,28 +640,352 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
     console.log('SolutionViewer3D: Reset orientation to original for', instances.length, 'instances');
   }, [resetTrigger, scene, originalTransform]);
 
+  // Effect to apply piece spacing transforms
+  useEffect(() => {
+    if (!scene || !pieceSpacingData) {
+      console.log('SolutionViewer3D: Piece spacing skipped - scene:', !!scene, 'data:', !!pieceSpacingData, 'spacing:', pieceSpacing);
+      return;
+    }
+
+    const effectivePieceSpacing = movieOverrides?.pieceSpacing ?? pieceSpacing;
+    const { pieceCentroids, pieceDirections } = pieceSpacingData;
+
+    // Find all unified piece instances
+    const instances = scene.children.filter(child => 
+      child.userData.type === 'UnifiedPiece'
+    );
+
+    console.log('SolutionViewer3D: Found instances for spacing:', instances.length);
+    console.log('SolutionViewer3D: Available pieces:', Object.keys(pieceCentroids));
+    console.log('SolutionViewer3D: Spacing value s =', effectivePieceSpacing);
+
+    let transformedCount = 0;
+    instances.forEach((instance, idx) => {
+      const piece = instance.userData.piece;
+      console.log(`Instance ${idx}: type=${instance.userData.type}, piece=${piece}`);
+      
+      if (!piece || !pieceCentroids[piece] || !pieceDirections[piece]) {
+        console.log(`Skipping instance ${idx}: missing data for piece ${piece}`);
+        return;
+      }
+
+      const baselineVector = pieceDirections[piece]; // v_i = c_i - p (baseline vector)
+      console.log(`Piece ${piece} baseline vector: [${baselineVector.x.toFixed(3)}, ${baselineVector.y.toFixed(3)}, ${baselineVector.z.toFixed(3)}]`);
+      
+      // Skip pieces at pivot (no-move marker)
+      if (baselineVector.length() < 0.001) {
+        console.log(`Skipping piece ${piece}: at pivot`);
+        return;
+      }
+
+      // Calculate translation offset: Δp_i(s) = (s-1) * v_i
+      const offset = baselineVector.clone().multiplyScalar(effectivePieceSpacing - 1.0);
+
+      // Store original position if not already stored
+      if (!instance.userData.originalSpacingPosition) {
+        instance.userData.originalSpacingPosition = instance.position.clone();
+      }
+
+      // Apply spacing offset to original position
+      const originalPos = instance.userData.originalSpacingPosition.clone();
+      const newPos = originalPos.add(offset);
+      instance.position.copy(newPos);
+      
+      console.log(`Transformed piece ${piece}: s=${effectivePieceSpacing}, baseline=[${baselineVector.x.toFixed(3)}, ${baselineVector.y.toFixed(3)}, ${baselineVector.z.toFixed(3)}], offset=[${offset.x.toFixed(2)}, ${offset.y.toFixed(2)}, ${offset.z.toFixed(2)}]`);
+      transformedCount++;
+    });
+
+    console.log('SolutionViewer3D: Applied centroid scaling:', effectivePieceSpacing, 'transformed:', transformedCount, 'instances');
+  }, [scene, pieceSpacingData, pieceSpacing, movieOverrides]);
+
+  // Effect to reset piece spacing when spacing is 1.0 (original pose)
+  useEffect(() => {
+    if (!scene || pieceSpacing !== 1.0) return;
+
+    // Find all instances and reset to original spacing positions
+    const instances = scene.children.filter(child => 
+      child.userData.type === 'UnifiedPiece'
+    );
+
+    instances.forEach(instance => {
+      if (instance.userData.originalSpacingPosition) {
+        instance.position.copy(instance.userData.originalSpacingPosition);
+      }
+    });
+
+    console.log('SolutionViewer3D: Reset piece spacing to original pose for', instances.length, 'instances');
+  }, [scene, pieceSpacing]);
+
+  // Expose methods via ref
+  useImperativeHandle(ref, () => ({
+    takeScreenshot: async (): Promise<string> => {
+      if (!canvasRef.current) {
+        throw new Error('Canvas not ready');
+      }
+      
+      console.log('SolutionViewer3D: Taking screenshot - camera should NOT be altered');
+      
+      // Get the canvas element from ThreeCanvas
+      const canvas = canvasRef.current.getCanvas();
+      if (!canvas) {
+        throw new Error('Canvas element not found');
+      }
+      
+      // Create a square crop based on canvas height
+      const sourceCanvas = canvas;
+      const height = sourceCanvas.height;
+      const width = sourceCanvas.width;
+      const size = Math.min(width, height);
+      
+      // Create a new canvas for the cropped square image
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = size;
+      cropCanvas.height = size;
+      const cropCtx = cropCanvas.getContext('2d');
+      
+      if (!cropCtx) {
+        throw new Error('Failed to get 2D context for crop canvas');
+      }
+      
+      // Calculate crop position (center the crop)
+      const cropX = (width - size) / 2;
+      const cropY = (height - size) / 2;
+      
+      // Draw the cropped portion to the new canvas
+      cropCtx.drawImage(sourceCanvas, cropX, cropY, size, size, 0, 0, size, size);
+      
+      // Convert cropped canvas to data URL
+      const dataUrl = cropCanvas.toDataURL('image/png');
+      
+      console.log('SolutionViewer3D: Screenshot captured and cropped to square successfully');
+      return dataUrl;
+    },
+    
+    createMovie: async (duration: number, showPlacement: boolean, showSeparation: boolean, onProgress?: (progress: number, phase: string) => void): Promise<Blob> => {
+      if (!canvasRef.current || !solution) {
+        throw new Error('Canvas or solution not ready');
+      }
+      
+      // Open directory picker for saving frames
+      let directoryHandle: any = null;
+      if ('showDirectoryPicker' in window) {
+        try {
+          directoryHandle = await (window as any).showDirectoryPicker();
+        } catch (err) {
+          throw new Error('Directory selection cancelled or not supported');
+        }
+      } else {
+        throw new Error('Directory picker not supported in this browser');
+      }
+      
+      const fps = 30;
+      const totalFrames = duration * fps;
+      const frameFiles: { name: string; blob: Blob }[] = [];
+      
+      // Animation sequence timing
+      const phaseFrames = Math.floor(totalFrames / 5); // 5 phases
+      let frameIndex = 0;
+      
+      // Easing function (ease-in-out)
+      const easeInOut = (t: number): number => {
+        return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      };
+      
+      // Helper function to capture and crop frame
+      const captureSquareFrame = async (): Promise<Blob | null> => {
+        const canvas = canvasRef.current?.getCanvas();
+        if (!canvas) return null;
+        
+        // Create square crop
+        const height = canvas.height;
+        const width = canvas.width;
+        const size = Math.min(width, height);
+        
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = size;
+        cropCanvas.height = size;
+        const cropCtx = cropCanvas.getContext('2d');
+        
+        if (!cropCtx) return null;
+        
+        const cropX = (width - size) / 2;
+        const cropY = (height - size) / 2;
+        
+        cropCtx.drawImage(canvas, cropX, cropY, size, size, 0, 0, size, size);
+        
+        // Convert to blob
+        return new Promise((resolve) => {
+          cropCanvas.toBlob((blob) => resolve(blob), 'image/png');
+        });
+      };
+      
+      // Helper function to save frame to directory
+      const saveFrameToDirectory = async (frameBlob: Blob, filename: string) => {
+        if (directoryHandle) {
+          try {
+            const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(frameBlob);
+            await writable.close();
+          } catch (err) {
+            console.error('Failed to save frame:', filename, err);
+          }
+        }
+      };
+      
+      // Helper function to wait for render and update progress
+      const waitForRender = (phase: string, progress: number) => {
+        if (onProgress) {
+          onProgress(progress, phase);
+        }
+        return new Promise(resolve => setTimeout(resolve, 100)); // Slower for visibility
+      };
+      
+      // Store original state
+      const originalMaxPlacements = maxPlacements;
+      const originalSpacing = pieceSpacing;
+      
+      try {
+        // Phase 1: Show full solution (static)
+        for (let i = 0; i < phaseFrames; i++) {
+          const progress = (frameIndex / totalFrames) * 100;
+          await waitForRender('Phase 1: Static Full Solution', progress);
+          
+          const frameBlob = await captureSquareFrame();
+          if (frameBlob) {
+            const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
+            frameFiles.push({ name: filename, blob: frameBlob });
+            await saveFrameToDirectory(frameBlob, filename);
+          }
+          frameIndex++;
+        }
+        
+        // Phase 2: Placement animation (if enabled)
+        if (showPlacement && solution.placements) {
+          const placementFrames = phaseFrames;
+          for (let i = 0; i < placementFrames; i++) {
+            const progress = i / (placementFrames - 1);
+            const easedProgress = easeInOut(progress);
+            
+            // Animate through placements by changing maxPlacements
+            const targetPlacement = Math.max(1, Math.floor(easedProgress * solution.placements.length));
+            
+            // Update both callback and internal state
+            if (onMaxPlacementsChange) {
+              onMaxPlacementsChange(targetPlacement);
+            }
+            // Override the maxPlacements for movie creation
+            setMovieOverrides(prev => ({ ...prev, maxPlacements: targetPlacement }));
+            
+            const overallProgress = (frameIndex / totalFrames) * 100;
+            await waitForRender('Phase 2: Placement Animation', overallProgress);
+            
+            const frameBlob = await captureSquareFrame();
+            if (frameBlob) {
+              const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
+              frameFiles.push({ name: filename, blob: frameBlob });
+              await saveFrameToDirectory(frameBlob, filename);
+            }
+            frameIndex++;
+          }
+        }
+        
+        // Phase 3: Show full solution again (static)
+        for (let i = 0; i < phaseFrames; i++) {
+          const progress = (frameIndex / totalFrames) * 100;
+          await waitForRender('Phase 3: Static Full Solution', progress);
+          
+          const frameBlob = await captureSquareFrame();
+          if (frameBlob) {
+            const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
+            frameFiles.push({ name: filename, blob: frameBlob });
+            await saveFrameToDirectory(frameBlob, filename);
+          }
+          frameIndex++;
+        }
+        
+        // Phase 4: Separation animation (if enabled)
+        if (showSeparation) {
+          const separationFrames = phaseFrames;
+          
+          for (let i = 0; i < separationFrames; i++) {
+            const progress = i / (separationFrames - 1);
+            const easedProgress = easeInOut(progress);
+            
+            // Animate spacing from 1.0 to 2.0
+            const animatedSpacing = 1.0 + easedProgress * 1.0;
+            
+            // Update both callback and internal state
+            if (onPieceSpacingChange) {
+              onPieceSpacingChange(animatedSpacing);
+            }
+            // Override the pieceSpacing for movie creation
+            setMovieOverrides(prev => ({ ...prev, pieceSpacing: animatedSpacing }));
+            
+            const overallProgress = (frameIndex / totalFrames) * 100;
+            await waitForRender('Phase 4: Separation Animation', overallProgress);
+            
+            const frameBlob = await captureSquareFrame();
+            if (frameBlob) {
+              const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
+              frameFiles.push({ name: filename, blob: frameBlob });
+              await saveFrameToDirectory(frameBlob, filename);
+            }
+            frameIndex++;
+          }
+        }
+        
+        // Phase 5: Show final state (static)
+        for (let i = 0; i < phaseFrames; i++) {
+          const progress = (frameIndex / totalFrames) * 100;
+          await waitForRender('Phase 5: Final State', progress);
+          
+          const frameBlob = await captureSquareFrame();
+          if (frameBlob) {
+            const filename = `frame_${frameIndex.toString().padStart(6, '0')}.png`;
+            frameFiles.push({ name: filename, blob: frameBlob });
+            await saveFrameToDirectory(frameBlob, filename);
+          }
+          frameIndex++;
+        }
+        
+        // Create movie from frames
+        const movieBlob = await createMPEGFromFrames(frameFiles, fps);
+        return movieBlob;
+        
+      } finally {
+        // Reset to original state
+        setMovieOverrides(null);
+        if (onMaxPlacementsChange) {
+          onMaxPlacementsChange(originalMaxPlacements);
+        }
+        if (onPieceSpacingChange) {
+          onPieceSpacingChange(originalSpacing);
+        }
+      }
+    }
+  }), [solution]);
+
   return (
-    <div style={{ width: '100%', height: '500px', border: '1px solid var(--border)', borderRadius: '8px' }}>
-      <ThreeCanvas ref={canvasRef} onReady={handleThreeReady}>
-        {scene && sphereGroups.map((group, index) => (
-          <InstancedSpheres
-            key={`spheres-${group.piece}-${index}`}
-            positions={group.positions}
-            colors={group.colors}
-            radius={group.radius || 0.3}
-            scene={scene}
-          />
-        ))}
-        {scene && bondGroups.map((group, index) => (
-          <InstancedBonds
-            key={`bonds-${group.piece}-${index}`}
-            positions={group.positions}
-            colors={group.colors}
-            radius={group.radius || 0.3}
-            scene={scene}
-          />
-        ))}
-      </ThreeCanvas>
+    <div style={{ width: '100%', height: '500px', border: '1px solid var(--border)', borderRadius: '8px', display: 'flex', justifyContent: 'center' }}>
+      <div style={{ width: '500px', height: '500px' }}>
+        <ThreeCanvas ref={canvasRef} onReady={handleThreeReady}>
+        {scene && pieceGroups.length > 0 && (
+          <>
+            {console.log('SolutionViewer3D: Rendering', pieceGroups.length, 'piece groups')}
+            {pieceGroups.map((group, index) => (
+              <UnifiedPiece
+                key={`piece-${group.piece}-${index}`}
+                piece={group.piece}
+                spheres={group.spheres}
+                bonds={group.bonds}
+                scene={scene}
+              />
+            ))}
+          </>
+        )}
+        </ThreeCanvas>
+      </div>
     </div>
   );
-};
+});

@@ -9,6 +9,7 @@ export interface InstancedSpheresProps {
   pieceIndices?: number[];
   colors?: Float32Array;
   scene?: THREE.Scene | null;
+  piece?: string;
 }
 
 export const InstancedSpheres: React.FC<InstancedSpheresProps> = ({
@@ -17,7 +18,8 @@ export const InstancedSpheres: React.FC<InstancedSpheresProps> = ({
   colorByPiece = false,
   pieceIndices = [],
   colors,
-  scene
+  scene,
+  piece
 }) => {
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
 
@@ -61,6 +63,13 @@ export const InstancedSpheres: React.FC<InstancedSpheresProps> = ({
     const mesh = new THREE.InstancedMesh(geometry, material, instanceCount);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    
+    // Set userData for piece spacing
+    mesh.userData = {
+      type: 'InstancedSpheres',
+      piece: piece
+    };
+    
     meshRef.current = mesh;
 
     // Update instance matrices
@@ -130,7 +139,7 @@ export const InstancedSpheres: React.FC<InstancedSpheresProps> = ({
         material.dispose();
       }
     };
-  }, [positions, radius, colorByPiece, pieceIndices, colors, scene]);
+  }, [positions, radius, colorByPiece, pieceIndices, colors, scene, piece]);
 
   return null; // This component manages Three.js objects directly
 };

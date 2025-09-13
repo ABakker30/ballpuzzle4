@@ -74,3 +74,32 @@ function hslToHex(h: number, s: number, l: number): string {
   
   return `#${rHex}${gHex}${bHex}`;
 }
+
+/**
+ * Generate a unique key for world coordinates
+ */
+export function keyW(x: number, y: number, z: number): string {
+  return `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
+}
+
+/**
+ * Get direct neighbors in FCC lattice
+ */
+export function getDirectNeighbors(cell: { X: number; Y: number; Z: number }): Array<{ X: number; Y: number; Z: number }> {
+  // FCC has 12 nearest neighbors
+  const neighbors = [
+    { X: cell.X + 0.5, Y: cell.Y + 0.5, Z: cell.Z },
+    { X: cell.X - 0.5, Y: cell.Y - 0.5, Z: cell.Z },
+    { X: cell.X + 0.5, Y: cell.Y, Z: cell.Z + 0.5 },
+    { X: cell.X - 0.5, Y: cell.Y, Z: cell.Z - 0.5 },
+    { X: cell.X, Y: cell.Y + 0.5, Z: cell.Z + 0.5 },
+    { X: cell.X, Y: cell.Y - 0.5, Z: cell.Z - 0.5 },
+    { X: cell.X + 0.5, Y: cell.Y - 0.5, Z: cell.Z },
+    { X: cell.X - 0.5, Y: cell.Y + 0.5, Z: cell.Z },
+    { X: cell.X + 0.5, Y: cell.Y, Z: cell.Z - 0.5 },
+    { X: cell.X - 0.5, Y: cell.Y, Z: cell.Z + 0.5 },
+    { X: cell.X, Y: cell.Y + 0.5, Z: cell.Z - 0.5 },
+    { X: cell.X, Y: cell.Y - 0.5, Z: cell.Z + 0.5 }
+  ];
+  return neighbors;
+}

@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 export interface ThreeCanvasRef {
   fit: (bounds: THREE.Box3) => void;
   setTarget: (center: THREE.Vector3) => void;
+  getCanvas: () => HTMLCanvasElement | null;
 }
 
 export interface ThreeCanvasProps {
@@ -50,6 +51,9 @@ export const ThreeCanvas = forwardRef<ThreeCanvasRef, ThreeCanvasProps>(
         
         controlsRef.current.target.copy(center);
         controlsRef.current.update();
+      },
+      getCanvas: () => {
+        return rendererRef.current?.domElement || null;
       }
     }));
 
@@ -77,7 +81,8 @@ export const ThreeCanvas = forwardRef<ThreeCanvasRef, ThreeCanvasProps>(
       const renderer = new THREE.WebGLRenderer({ 
         antialias: true,
         alpha: true,
-        powerPreference: "high-performance"
+        powerPreference: "high-performance",
+        preserveDrawingBuffer: true
       });
       renderer.setSize(mount.clientWidth, mount.clientHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));

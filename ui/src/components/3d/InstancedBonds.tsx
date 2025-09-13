@@ -6,13 +6,15 @@ interface InstancedBondsProps {
   colors: Float32Array;    // [r, g, b, r, g, b, ...] for each bond
   radius: number;
   scene: THREE.Scene;
+  piece?: string;
 }
 
 export const InstancedBonds: React.FC<InstancedBondsProps> = ({
   positions,
   colors,
   radius,
-  scene
+  scene,
+  piece
 }) => {
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
 
@@ -34,6 +36,13 @@ export const InstancedBonds: React.FC<InstancedBondsProps> = ({
     const mesh = new THREE.InstancedMesh(geometry, material, bondCount);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    
+    // Set userData for piece spacing
+    mesh.userData = {
+      type: 'InstancedBonds',
+      piece: piece
+    };
+    
     meshRef.current = mesh;
 
     // Create instance matrices and colors
@@ -104,7 +113,7 @@ export const InstancedBonds: React.FC<InstancedBondsProps> = ({
         material.dispose();
       }
     };
-  }, [scene, positions, colors, radius]);
+  }, [positions, colors, radius, scene, piece]);
 
   return null;
 };
