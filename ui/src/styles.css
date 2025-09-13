@@ -82,6 +82,59 @@ pre.cmd { margin:0; white-space: pre-wrap; word-break: break-word; font-family: 
 
 @media (max-width: 900px){ .field{ grid-column: span 12; } }
 
+/* Range slider styles */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--surface);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--surface);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  background: color-mix(in oklab, var(--accent) 80%, white);
+  transform: scale(1.1);
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  background: color-mix(in oklab, var(--accent) 80%, white);
+  transform: scale(1.1);
+}
+
+input[type="range"]:focus::-webkit-slider-thumb {
+  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+input[type="range"]:focus::-moz-range-thumb {
+  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
 /* PR-2.3.1/* Status layout */
 .status-layout { 
   display: grid; 

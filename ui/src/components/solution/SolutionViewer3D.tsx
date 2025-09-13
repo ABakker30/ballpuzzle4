@@ -4,12 +4,15 @@ import { InstancedSpheres } from '../3d/InstancedSpheres';
 import { InstancedBonds } from '../3d/InstancedBonds';
 import { engineToWorldInt, worldToEngineInt, getDirectNeighbors, keyW } from '../../lib/lattice';
 import { SolutionJson, Placement } from '../../types/solution';
+import { GeometryProcessor, OrientationResult } from '../../lib/geometryProcessor';
 import * as THREE from 'three';
 
 interface SolutionViewer3DProps {
   solution: SolutionJson | null;
   maxPlacements?: number;
   brightness?: number;
+  orientToSurface?: boolean;
+  resetTrigger?: number;
 }
 
 // Generate PBR paint colors for pieces A-Z - professional paint palette
@@ -59,7 +62,9 @@ const PIECE_COLORS = generatePieceColors();
 export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({ 
   solution, 
   maxPlacements = Infinity,
-  brightness = 1.0
+  brightness = 1.0,
+  orientToSurface = false,
+  resetTrigger = 0
 }) => {
   const canvasRef = useRef<ThreeCanvasRef>(null);
   const [sphereGroups, setSphereGroups] = useState<Array<{
@@ -75,15 +80,21 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
     radius: number;
   }>>([]);
   const [scene, setScene] = useState<THREE.Scene | null>(null);
-  const [camera, setCamera] = useState<THREE.PerspectiveCamera | null>(null);
-  const [cameraInitialized, setCameraInitialized] = useState<boolean>(false);
+  const [camera, setCamera] = useState<THREE.Camera | null>(null);
+  const [cameraInitialized, setCameraInitialized] = useState(false);
+  const [orientationResult, setOrientationResult] = useState<OrientationResult | null>(null);
+  const [originalTransform, setOriginalTransform] = useState<{
+    position: THREE.Vector3;
+    rotation: THREE.Quaternion;
+  } | null>(null);
+  const geometryProcessor = new GeometryProcessor();
 
   const handleThreeReady = (context: { scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: any; renderer: THREE.WebGLRenderer }) => {
     setScene(context.scene);
     setCamera(context.camera);
   };
 
-  // Update lighting brightness when brightness prop changes
+  // Update lighting brightness when brightness prop changes or scene is ready
   useEffect(() => {
     if (!scene) return;
     
@@ -104,7 +115,9 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
         }
       }
     });
-  }, [scene, brightness]);
+    
+    console.log('SolutionViewer3D: Applied brightness multiplier:', brightness);
+  }, [scene, brightness]); // Include scene to apply brightness when scene is first ready
 
   useEffect(() => {
     if (!solution || !solution.placements) {
@@ -305,7 +318,21 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
     console.log('SolutionViewer3D: Setting bond groups:', bondsWithRadius);
     setSphereGroups(groupsWithRadius);
     setBondGroups(bondsWithRadius);
-  }, [solution, maxPlacements]);
+
+    // Compute orientation if enabled
+    if (orientToSurface && groupsWithRadius.length > 0) {
+      try {
+        const result = geometryProcessor.computeRestOrientation(groupsWithRadius);
+        setOrientationResult(result);
+        console.log('SolutionViewer3D: Computed orientation result:', result);
+      } catch (error) {
+        console.warn('SolutionViewer3D: Failed to compute orientation:', error);
+        setOrientationResult(null);
+      }
+    } else {
+      setOrientationResult(null);
+    }
+  }, [solution, maxPlacements, orientToSurface]);
 
   // Separate effect for initial camera positioning - only runs when solution changes
   useEffect(() => {
@@ -342,6 +369,79 @@ export const SolutionViewer3D: React.FC<SolutionViewer3DProps> = ({
   useEffect(() => {
     setCameraInitialized(false);
   }, [solution]);
+
+  // Effect to apply orientation transform to the scene
+  useEffect(() => {
+    if (!scene || !orientationResult) return;
+
+    // Find all sphere and bond instances
+    const instances = scene.children.filter(child => 
+      child.userData.type === 'InstancedSpheres' || child.userData.type === 'InstancedBonds'
+    );
+
+    if (instances.length === 0) return;
+
+    // Store original transforms if not already stored
+    if (!originalTransform) {
+      const firstInstance = instances[0];
+      setOriginalTransform({
+        position: firstInstance.position.clone(),
+        rotation: firstInstance.quaternion.clone()
+      });
+    }
+
+    // Apply transform to each instance
+    instances.forEach((instance, idx) => {
+      // Store original transform if not already stored
+      if (!instance.userData.originalPosition) {
+        instance.userData.originalPosition = instance.position.clone();
+        instance.userData.originalQuaternion = instance.quaternion.clone();
+      }
+      
+      // Reset to original position first
+      const originalPos = instance.userData.originalPosition.clone();
+      const originalQuat = instance.userData.originalQuaternion.clone();
+      
+      instance.position.copy(originalPos);
+      instance.quaternion.copy(originalQuat);
+      
+      // Translate to put hull centroid at origin
+      instance.position.sub(orientationResult.hullCentroid);
+      
+      // Apply rotation about origin (which is now the hull centroid)
+      instance.position.applyQuaternion(orientationResult.rotation);
+      instance.quaternion.multiplyQuaternions(orientationResult.rotation, instance.quaternion);
+      
+      // Translate back and apply grounding
+      instance.position.add(orientationResult.hullCentroid);
+      instance.position.add(orientationResult.translation);
+    });
+
+    console.log('SolutionViewer3D: Applied orientation transform to', instances.length, 'instances');
+  }, [scene, orientationResult, originalTransform]);
+
+  // Effect to handle reset orientation
+  useEffect(() => {
+    if (resetTrigger === 0 || !scene || !originalTransform) return;
+
+    // Find all sphere and bond instances
+    const instances = scene.children.filter(child => 
+      child.userData.type === 'InstancedSpheres' || child.userData.type === 'InstancedBonds'
+    );
+
+    // Reset each instance to original transform
+    instances.forEach(instance => {
+      if (instance.userData.originalPosition && instance.userData.originalQuaternion) {
+        instance.position.copy(instance.userData.originalPosition);
+        instance.quaternion.copy(instance.userData.originalQuaternion);
+      }
+    });
+    
+    // Clear orientation result
+    setOrientationResult(null);
+    
+    console.log('SolutionViewer3D: Reset orientation to original for', instances.length, 'instances');
+  }, [resetTrigger, scene, originalTransform]);
 
   return (
     <div style={{ width: '100%', height: '500px', border: '1px solid var(--border)', borderRadius: '8px' }}>

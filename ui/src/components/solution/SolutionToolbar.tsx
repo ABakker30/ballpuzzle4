@@ -1,22 +1,19 @@
 import React, { useRef } from 'react';
 import { SolutionJson } from '../../types/solution';
+import { Slider } from '../common/Slider';
 
 interface SolutionToolbarProps {
   onLoadSolution: (solution: SolutionJson) => void;
   solution: SolutionJson | null;
   maxPlacements: number;
   onMaxPlacementsChange: (max: number) => void;
-  brightness: number;
-  onBrightnessChange: (brightness: number) => void;
 }
 
 export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
   onLoadSolution,
   solution,
   maxPlacements,
-  onMaxPlacementsChange,
-  brightness,
-  onBrightnessChange
+  onMaxPlacementsChange
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -98,61 +95,18 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
 
       {solution && (
         <div className="toolbar-section">
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            Show placements:
-            <input
-              type="range"
-              min="0"
-              max={totalPlacements}
-              value={Math.min(maxPlacements, totalPlacements)}
-              onChange={(e) => onMaxPlacementsChange(parseInt(e.target.value))}
-              style={{ width: '150px' }}
-            />
-            <span style={{ minWidth: '60px', fontSize: '14px' }}>
-              {Math.min(maxPlacements, totalPlacements)} / {totalPlacements}
-            </span>
-          </label>
+          <Slider
+            label="Show placements"
+            min={0}
+            max={totalPlacements}
+            value={Math.min(maxPlacements, totalPlacements)}
+            onChange={onMaxPlacementsChange}
+            width="150px"
+            formatValue={(value) => `${value} / ${totalPlacements}`}
+          />
         </div>
       )}
 
-      <div className="toolbar-section">
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          Brightness:
-          <input
-            type="range"
-            min="0.2"
-            max="3.0"
-            step="0.1"
-            value={brightness}
-            onChange={(e) => onBrightnessChange(parseFloat(e.target.value))}
-            style={{ width: '120px' }}
-          />
-          <span style={{ minWidth: '40px', fontSize: '14px' }}>
-            {brightness.toFixed(1)}x
-          </span>
-        </label>
-      </div>
-
-      <div className="toolbar-section">
-        <div className="stats-chips">
-          <div className="chip">
-            <span className="chip-label">Engine:</span>
-            <span className="chip-value">{solution?.solver?.engine || 'Unknown'}</span>
-          </div>
-          <div className="chip">
-            <span className="chip-label">Placements:</span>
-            <span className="chip-value">{totalPlacements}</span>
-          </div>
-          {solution?.piecesUsed && (
-            <div className="chip">
-              <span className="chip-label">Pieces:</span>
-              <span className="chip-value">
-                {Object.values(solution.piecesUsed).reduce((sum, count) => sum + count, 0)}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 };
