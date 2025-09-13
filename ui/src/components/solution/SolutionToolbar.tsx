@@ -116,10 +116,11 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
             label="Show placements"
             min={0}
             max={totalPlacements}
+            step={0.1}
             value={Math.min(maxPlacements, totalPlacements)}
             onChange={onMaxPlacementsChange}
             width="150px"
-            formatValue={(value) => `${value} / ${totalPlacements}`}
+            formatValue={(value) => `${value.toFixed(1)} / ${totalPlacements}`}
           />
         </div>
       )}

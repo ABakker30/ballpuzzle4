@@ -14,13 +14,15 @@ interface UnifiedPieceProps {
     radius: number;
   };
   scene: THREE.Scene;
+  opacity?: number; // For transparency effects during placement animation
 }
 
 export const UnifiedPiece: React.FC<UnifiedPieceProps> = ({
   piece,
   spheres,
   bonds,
-  scene
+  scene,
+  opacity = 1.0
 }) => {
   const groupRef = useRef<THREE.Group | null>(null);
 
@@ -28,7 +30,7 @@ export const UnifiedPiece: React.FC<UnifiedPieceProps> = ({
     if (!scene) return;
 
     console.log(`UnifiedPiece: Creating piece ${piece} with ${spheres.positions.length / 3} spheres and ${bonds.positions.length / 6} bonds`);
-    console.log(`UnifiedPiece: Sphere radius: ${spheres.radius}, Bond radius: ${bonds.radius}`);
+    console.log(`UnifiedPiece: Sphere radius: ${spheres.radius}, Bond radius: ${bonds.radius}, Opacity: ${opacity}`);
 
     // Create a group to hold both spheres and bonds
     const pieceGroup = new THREE.Group();
@@ -40,11 +42,13 @@ export const UnifiedPiece: React.FC<UnifiedPieceProps> = ({
     // Create sphere instances
     if (spheres.positions.length > 0) {
       const sphereCount = spheres.positions.length / 3;
-      const sphereGeometry = new THREE.SphereGeometry(spheres.radius, 16, 12);
+      const sphereGeometry = new THREE.SphereGeometry(spheres.radius, 32, 24);
       const sphereMaterial = new THREE.MeshStandardMaterial({
         metalness: 0.3,
         roughness: 0.4,
-        envMapIntensity: 0.8
+        envMapIntensity: 0.8,
+        transparent: opacity < 1.0,
+        opacity: opacity
       });
       
       const sphereInstancedMesh = new THREE.InstancedMesh(
@@ -89,11 +93,13 @@ export const UnifiedPiece: React.FC<UnifiedPieceProps> = ({
     // Create bond instances
     if (bonds.positions.length > 0) {
       const bondCount = bonds.positions.length / 6; // 2 points per bond
-      const bondGeometry = new THREE.CylinderGeometry(bonds.radius, bonds.radius, 1, 8);
+      const bondGeometry = new THREE.CylinderGeometry(bonds.radius, bonds.radius, 1, 32, 1);
       const bondMaterial = new THREE.MeshStandardMaterial({
         metalness: 0.3,
         roughness: 0.4,
-        envMapIntensity: 0.8
+        envMapIntensity: 0.8,
+        transparent: opacity < 1.0,
+        opacity: opacity
       });
       
       const bondInstancedMesh = new THREE.InstancedMesh(
@@ -124,9 +130,19 @@ export const UnifiedPiece: React.FC<UnifiedPieceProps> = ({
         );
         
         // Calculate bond center, length, and orientation
-        const center = start.clone().add(end).multiplyScalar(0.5);
-        const length = start.distanceTo(end);
+        // Slightly extend bonds into spheres for seamless connection
+        const fullLength = start.distanceTo(end);
+        const extensionDepth = spheres.radius * 0.2; // Extend 20% of radius into each sphere
+        const bondLength = Math.max(0.1, fullLength - (spheres.radius * 2) + (extensionDepth * 2));
+        
         direction.subVectors(end, start).normalize();
+        
+        // Calculate bond start and end points with slight extension into spheres
+        const bondStart = start.clone().add(direction.clone().multiplyScalar(spheres.radius - extensionDepth));
+        const bondEnd = end.clone().sub(direction.clone().multiplyScalar(spheres.radius - extensionDepth));
+        
+        const center = bondStart.clone().add(bondEnd).multiplyScalar(0.5);
+        const length = bondLength;
         
         // Create rotation quaternion to align cylinder with bond direction
         quaternion.setFromUnitVectors(up, direction);
@@ -181,6 +197,22 @@ export const UnifiedPiece: React.FC<UnifiedPieceProps> = ({
       }
     };
   }, [scene, piece, spheres, bonds]);
+
+  // Separate effect to update opacity when it changes
+  useEffect(() => {
+    if (!groupRef.current) return;
+
+    console.log(`UnifiedPiece: Updating opacity for piece ${piece} to ${opacity}`);
+
+    groupRef.current.traverse((child) => {
+      if (child instanceof THREE.InstancedMesh) {
+        const material = child.material as THREE.MeshStandardMaterial;
+        material.opacity = opacity;
+        material.transparent = opacity < 1.0;
+        material.needsUpdate = true;
+      }
+    });
+  }, [opacity, piece]);
 
   return null; // This component doesn't render anything directly
 };

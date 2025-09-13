@@ -335,8 +335,9 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
     const allWorldCells: Array<{ x: number; y: number; z: number }> = [];
     
     const effectiveMaxPlacements = movieOverrides?.maxPlacements ?? maxPlacements;
-    const placementsToShow = solution.placements.slice(0, effectiveMaxPlacements);
-    console.log('SolutionViewer3D: Showing', placementsToShow.length, 'placements');
+    // Always show all placements - transparency will handle visibility
+    const placementsToShow = solution.placements;
+    console.log('SolutionViewer3D: Showing all', placementsToShow.length, 'placements, effectiveMaxPlacements=', effectiveMaxPlacements);
     
     for (const placement of placementsToShow) {
       const piece = placement.piece;
@@ -843,6 +844,10 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         const canvas = canvasRef.current?.getCanvas();
         if (!canvas) return null;
         
+        // Wait for any pending renders to complete
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        
         // Create square crop
         const height = canvas.height;
         const width = canvas.width;
@@ -885,7 +890,9 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         if (onProgress) {
           onProgress(progress, phase);
         }
-        return new Promise(resolve => setTimeout(resolve, 100)); // Slower for visibility
+        // Longer wait for separation animations to prevent flickering
+        const waitTime = phase.includes('Separation') ? 200 : 100;
+        return new Promise(resolve => setTimeout(resolve, waitTime));
       };
       
       // Store original state
@@ -913,8 +920,8 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
             const progress = i / (phase2Frames - 1);
             const easedProgress = easeInOut(progress);
             
-            // Animate from max to min placements
-            const targetPlacement = Math.max(1, Math.floor((1 - easedProgress) * solution.placements.length) + 1);
+            // Animate from max to min placements with fractional values for smooth transitions
+            const targetPlacement = solution.placements.length * (1 - easedProgress);
             
             // Update both callback and internal state
             if (onMaxPlacementsChange) {
@@ -942,8 +949,8 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
             const progress = i / (phase3Frames - 1);
             const easedProgress = easeInOut(progress);
             
-            // Animate from min to max placements
-            const targetPlacement = Math.max(1, Math.floor(easedProgress * solution.placements.length) + 1);
+            // Animate from min to max placements with fractional values for smooth transitions
+            const targetPlacement = solution.placements.length * easedProgress;
             
             // Update both callback and internal state
             if (onMaxPlacementsChange) {
@@ -1091,15 +1098,50 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         {scene && pieceGroups.length > 0 && (
           <>
             {console.log('SolutionViewer3D: Rendering', pieceGroups.length, 'piece groups')}
-            {pieceGroups.map((group, index) => (
-              <UnifiedPiece
-                key={`piece-${group.piece}-${index}`}
-                piece={group.piece}
-                spheres={group.spheres}
-                bonds={group.bonds}
-                scene={scene}
-              />
-            ))}
+            {pieceGroups.map((group, index) => {
+              // Calculate opacity for placement animation
+              let pieceOpacity = 1.0;
+              const effectiveMaxPlacements = movieOverrides?.maxPlacements ?? maxPlacements;
+              
+              console.log(`Piece ${group.piece}: effectiveMaxPlacements=${effectiveMaxPlacements}, maxPlacements=${maxPlacements}, movieOverrides=${movieOverrides?.maxPlacements}`);
+              
+              if (effectiveMaxPlacements !== undefined && solution?.placements) {
+                const pieceIndex = solution.placements.findIndex(p => p.piece === group.piece);
+                if (pieceIndex >= 0) {
+                  // Calculate smooth per-piece transition based on fractional placement value
+                  const fractionalPlacement = effectiveMaxPlacements;
+                  
+                  // Simple logic: pieces fade in as they are placed
+                  if (fractionalPlacement <= pieceIndex) {
+                    // Piece is not yet placed - fully transparent
+                    pieceOpacity = 0.0;
+                  } else if (fractionalPlacement >= pieceIndex + 1) {
+                    // Piece is fully placed - fully opaque
+                    pieceOpacity = 1.0;
+                  } else {
+                    // Piece is in transition - linear fade
+                    pieceOpacity = fractionalPlacement - pieceIndex;
+                  }
+                  
+                  console.log(`Piece ${group.piece} (index ${pieceIndex}): fractionalPlacement=${fractionalPlacement}, opacity=${pieceOpacity.toFixed(3)}`);
+                } else {
+                  console.log(`Piece ${group.piece}: NOT FOUND in placements array`);
+                }
+              } else {
+                console.log(`Piece ${group.piece}: No placement data available`);
+              }
+              
+              return (
+                <UnifiedPiece
+                  key={`piece-${group.piece}-${index}`}
+                  piece={group.piece}
+                  spheres={group.spheres}
+                  bonds={group.bonds}
+                  scene={scene}
+                  opacity={pieceOpacity}
+                />
+              );
+            })}
           </>
         )}
         </ThreeCanvas>
