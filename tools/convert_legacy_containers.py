@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Convert legacy container files to Ballpuzzle4 v1.0 standard.
-Reads legacy formats and outputs v1.0 compliant containers.
+[DEPRECATED] Convert legacy container files to Ballpuzzle4 v1.0 standard.
+
+This tool is deprecated as all containers have been migrated to v1.0 format.
+Use cli/validate_container.py for v1.0 container validation instead.
 """
 
 import json
@@ -17,7 +19,10 @@ sys.path.append(str(Path(__file__).parent))
 from validate_containers import compute_cid
 
 def convert_legacy_container(legacy_path: Path, designer_name: str, designer_email: Optional[str] = None) -> Dict[str, Any]:
-    """Convert a legacy container file to v1.0 format."""
+    """[DEPRECATED] Convert a legacy container file to v1.0 format.
+    
+    This function is deprecated. All containers should already be in v1.0 format.
+    """
     
     with open(legacy_path, 'r', encoding='utf-8') as f:
         legacy_data = json.load(f)

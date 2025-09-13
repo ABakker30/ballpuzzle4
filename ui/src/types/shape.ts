@@ -12,12 +12,34 @@ export interface WorldCell {
   Z: number;
 }
 
-// Container JSON format (matches actual file structure)
+// Container v1.0 format (strict)
+export interface ContainerV1 {
+  version: '1.0';
+  lattice: 'fcc';
+  cells: number[][]; // Array of [i, j, k] triplets
+  cid: string;
+  designer: {
+    name: string;
+    date: string;
+    email?: string;
+  };
+  // UI compatibility field (mapped from cells)
+  coordinates?: number[][];
+}
+
+// Legacy container format (deprecated - for backward compatibility only)
 export interface ContainerJson {
-  name?: string;
-  cid?: string;
-  cells?: number;
+  version?: string;
   lattice?: string;
-  lattice_type?: string;
   coordinates?: number[][]; // Array of [i, j, k] triplets
+  cid?: string;
+  designer?: {
+    name: string;
+    date: string;
+    email?: string;
+  };
+  // Legacy fields (deprecated)
+  name?: string;
+  cells?: number;
+  lattice_type?: string;
 }

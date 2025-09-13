@@ -325,35 +325,50 @@ class DFSEngine(EngineProtocol):
                 
                 return combinations
             
-            # For smaller containers, use full enumeration but with limits
-            from itertools import combinations_with_replacement
+            # For smaller containers, use combinations (not combinations_with_replacement)
+            # since we typically have 1 of each piece type A-Y
+            from itertools import combinations as iter_combinations
             
             combinations = []
             piece_names = list(available_pieces.keys())
             
-            # Limit enumeration to prevent explosion
-            count = 0
-            for combo in combinations_with_replacement(piece_names, pieces_needed):
-                count += 1
-                if count > max_combinations * 10:  # Safety limit
-                    break
+            # Check if we can use simple combinations (1 of each piece)
+            if all(available_pieces[piece] >= 1 for piece in piece_names) and len(piece_names) >= pieces_needed:
+                # Use combinations for selecting pieces_needed from available piece types
+                count = 0
+                for combo in iter_combinations(piece_names, pieces_needed):
+                    count += 1
+                    if count > max_combinations:  # Limit combinations
+                        break
                     
-                # Count pieces in this combination
-                piece_count = {}
-                for piece in combo:
-                    piece_count[piece] = piece_count.get(piece, 0) + 1
-                
-                # Check if we have enough inventory
-                valid = True
-                for piece, count_needed in piece_count.items():
-                    if available_pieces.get(piece, 0) < count_needed:
-                        valid = False
-                        break
-                
-                if valid:
+                    # Each piece appears exactly once
+                    piece_count = {piece: 1 for piece in combo}
                     combinations.append(piece_count)
-                    if len(combinations) >= max_combinations:
+            else:
+                # Fallback to original logic for complex inventories
+                from itertools import combinations_with_replacement
+                count = 0
+                for combo in combinations_with_replacement(piece_names, pieces_needed):
+                    count += 1
+                    if count > max_combinations * 10:  # Safety limit
                         break
+                        
+                    # Count pieces in this combination
+                    piece_count = {}
+                    for piece in combo:
+                        piece_count[piece] = piece_count.get(piece, 0) + 1
+                    
+                    # Check if we have enough inventory
+                    valid = True
+                    for piece, count_needed in piece_count.items():
+                        if available_pieces.get(piece, 0) < count_needed:
+                            valid = False
+                            break
+                    
+                    if valid:
+                        combinations.append(piece_count)
+                        if len(combinations) >= max_combinations:
+                            break
             
             return combinations
         
@@ -421,7 +436,7 @@ class DFSEngine(EngineProtocol):
             state.occupied_mask = 0
             
             def dfs(depth: int, placement_stack: List[Tuple[Placement, int]]) -> Iterator[SolveEvent]:
-                nonlocal solutions_found, nodes_explored, max_depth_reached, max_pieces_placed, current_placement_stack, next_instance_id
+                nonlocal solutions_found, nodes_explored, max_depth_reached, max_pieces_placed, current_placement_stack, next_instance_id, pieces_dict
                 
                 # Time limit check
                 if time_limit > 0 and (time.time() - t0) >= time_limit:

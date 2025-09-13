@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Container validation tool for Ballpuzzle4 v1.0 standard.
-Validates JSON schema and recomputes CID to ensure correctness.
+[DEPRECATED] Container validation tool for Ballpuzzle4 v1.0 standard.
+
+This tool is deprecated. Use cli/validate_container.py for v1.0 container validation instead.
+The new CLI tool provides better error handling and integration with the project structure.
 """
 
 import json

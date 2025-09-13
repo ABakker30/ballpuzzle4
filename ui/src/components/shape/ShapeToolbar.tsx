@@ -1,17 +1,20 @@
-import React, { useRef } from 'react';
-import { ContainerJson, EngineCell } from '../../types/shape';
+import React, { useRef, useState } from 'react';
+import { ContainerV1, EngineCell } from '../../types/shape';
 import { engineToWorldInt } from '../../lib/lattice';
+import { loadContainerV1, ContainerLoadResponse } from '../../lib/container-loader';
 
 export interface ShapeToolbarProps {
   containerName: string;
   cellCount: number;
-  onLoadContainer: (container: ContainerJson) => void;
+  onLoadContainer: (container: ContainerV1) => void;
   onFitView: () => void;
   onResetView: () => void;
   onSaveAsNew: () => void;
   onClear: () => void;
   liveCID: string;
   canSave: boolean;
+  onShowError?: (title: string, message: string, details?: string[]) => void;
+  onShowWarning?: (message: string) => void;
 }
 
 export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
@@ -23,50 +26,66 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
   onSaveAsNew,
   liveCID = '',
   canSave = true,
-  onClear
+  onClear,
+  onShowError,
+  onShowWarning
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const content = e.target?.result as string;
-        const container = JSON.parse(content) as ContainerJson;
-        
-        // Validate coordinates field
-        const coords = container.coordinates || [];
-        if (!Array.isArray(coords)) {
-          throw new Error('Invalid container format: coordinates must be an array');
+    setIsLoading(true);
+    
+    try {
+      const result: ContainerLoadResponse = await loadContainerV1(file);
+      
+      if (!result.success) {
+        // Schema validation failed
+        if (onShowError) {
+          onShowError(
+            'Invalid Container Format',
+            result.error,
+            result.details
+          );
+        } else {
+          const details = result.details ? '\n\nDetails:\n' + result.details.join('\n') : '';
+          alert(`${result.error}${details}`);
         }
-        
-        // Validate coordinate format - must be arrays of [i,j,k]
-        if (coords.length > 0 && !Array.isArray(coords[0])) {
-          throw new Error('Invalid container format: coordinates must be arrays of [i,j,k]');
-        }
-        
-        // Validate each coordinate triplet
-        coords.forEach((coord, index) => {
-          if (!Array.isArray(coord) || coord.length !== 3 || !coord.every(n => typeof n === 'number')) {
-            throw new Error(`Invalid coordinate at index ${index}: must be [i,j,k] number array`);
-          }
-        });
-        
-        const normalizedContainer = {
-          ...container,
-          coordinates: coords
-        };
-        
-        onLoadContainer(normalizedContainer);
-      } catch (error) {
-        console.error('Error loading container:', error);
-        alert(`Error loading container: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        return;
       }
-    };
-    reader.readAsText(file);
+      
+      // Check for CID mismatch
+      if (result.cidMismatch && result.computedCid) {
+        const warningMsg = `CID mismatch detected!\nExpected: ${result.container.cid}\nComputed: ${result.computedCid}\n\nThe container will still load, but the CID may be incorrect.`;
+        
+        if (onShowWarning) {
+          onShowWarning(warningMsg);
+        } else {
+          console.warn('CID mismatch:', {
+            expected: result.container.cid,
+            computed: result.computedCid
+          });
+        }
+      }
+      
+      // Successfully loaded
+      onLoadContainer(result.container);
+      
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      if (onShowError) {
+        onShowError('Load Error', 'Failed to load container file', [errorMsg]);
+      } else {
+        alert(`Failed to load container: ${errorMsg}`);
+      }
+    } finally {
+      setIsLoading(false);
+      // Clear the input so the same file can be selected again
+      event.target.value = '';
+    }
   };
 
   const handleLoadClick = () => {
@@ -83,13 +102,13 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
   return (
     <div className="shape-toolbar">
       <div className="toolbar-section">
-        <button className="button" onClick={handleLoadClick}>
-          Load Shape
+        <button className="button" onClick={handleLoadClick} disabled={isLoading}>
+          {isLoading ? 'Loading...' : 'Load Shape'}
         </button>
         <input
           ref={fileInputRef}
           type="file"
-          accept=".json"
+          accept=".json,.fcc.json"
           onChange={handleFileSelect}
           style={{ display: 'none' }}
         />

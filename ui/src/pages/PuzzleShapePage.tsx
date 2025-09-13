@@ -3,15 +3,18 @@ import * as THREE from 'three';
 import { ThreeCanvas, ThreeCanvasRef } from '../components/3d/ThreeCanvas';
 import { InstancedSpheres } from '../components/3d/InstancedSpheres';
 import { ShapeToolbar } from '../components/shape/ShapeToolbar';
-import { ContainerJson, WorldCell, EngineCell } from '../types/shape';
+import { ContainerV1, WorldCell, EngineCell } from '../types/shape';
 import { engineToWorldInt, worldToEngineInt, keyW, calculateOptimalRadius, parseWorldKey } from '../lib/lattice';
 import { Vector3 } from '../lib/fcc';
 import { ShapeEditor3D } from '../components/shape/ShapeEditor3D';
 import { computeCID } from '../utils/cid';
+import { ErrorDialog } from '../components/dialogs/ErrorDialog';
+import { WarningBanner } from '../components/dialogs/WarningBanner';
 import '../components/shape/ShapeEditor.css';
+import '../components/dialogs/dialogs.css';
 
 export const PuzzleShapePage: React.FC = () => {
-  const [container, setContainer] = useState<ContainerJson | null>(null);
+  const [container, setContainer] = useState<ContainerV1 | null>(null);
   const [worldCells, setWorldCells] = useState<Set<string>>(new Set());
   const [worldPositions, setWorldPositions] = useState<Vector3[]>([]);
   const [worldCellPositions, setWorldCellPositions] = useState<WorldCell[]>([]);
@@ -23,8 +26,20 @@ export const PuzzleShapePage: React.FC = () => {
   const [liveCID, setLiveCID] = useState<string>('');
   const [brightness] = useState<number>(4.0);
   const canvasRef = useRef<ThreeCanvasRef>(null);
+  
+  // Dialog and warning states
+  const [errorDialog, setErrorDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    details?: string[];
+  }>({ isOpen: false, title: '', message: '' });
+  const [warningBanner, setWarningBanner] = useState<{
+    isVisible: boolean;
+    message: string;
+  }>({ isVisible: false, message: '' });
 
-  const handleLoadContainer = useCallback((newContainer: ContainerJson) => {
+  const handleLoadContainer = useCallback((newContainer: ContainerV1) => {
     console.log('Loading container:', newContainer);
     setContainer(newContainer);
 
@@ -33,8 +48,10 @@ export const PuzzleShapePage: React.FC = () => {
     const positions: Vector3[] = [];
     const worldCellArray: WorldCell[] = [];
 
-    if (newContainer.coordinates) {
-      newContainer.coordinates.forEach(([i, j, k]) => {
+    // Use coordinates field (mapped from cells by loader)
+    const coords = newContainer.coordinates || [];
+    if (coords && coords.length > 0) {
+      coords.forEach(([i, j, k]) => {
         if (Array.isArray([i, j, k]) && [i, j, k].length === 3) {
           const worldCell = engineToWorldInt(i, j, k);
           const key = keyW(worldCell.X, worldCell.Y, worldCell.Z);
@@ -345,15 +362,21 @@ export const PuzzleShapePage: React.FC = () => {
     });
     
     const cid = await computeCID(engineCells);
-    const containerData: ContainerJson = {
-      cid,
-      cells: engineCells.length,
+    
+    // Create v1.0 container format
+    const containerData = {
+      version: '1.0',
       lattice: 'fcc',
-      coordinates: engineCells.map(cell => [cell.i, cell.j, cell.k])
+      cells: engineCells.map(cell => [cell.i, cell.j, cell.k]),
+      cid,
+      designer: {
+        name: 'Shape Editor User',
+        date: new Date().toISOString().split('T')[0]
+      }
     };
     
     const jsonContent = JSON.stringify(containerData, null, 2);
-    const defaultFilename = `container_${cid.slice(6, 14)}.json`;
+    const defaultFilename = `container_${cid.slice(6, 14)}.fcc.json`;
     
     // Try File System Access API first (modern browsers)
     if ('showSaveFilePicker' in window) {
@@ -361,8 +384,8 @@ export const PuzzleShapePage: React.FC = () => {
         const fileHandle = await (window as any).showSaveFilePicker({
           suggestedName: defaultFilename,
           types: [{
-            description: 'JSON files',
-            accept: { 'application/json': ['.json'] }
+            description: 'FCC Container files',
+            accept: { 'application/json': ['.fcc.json', '.json'] }
           }]
         });
         
@@ -390,13 +413,60 @@ export const PuzzleShapePage: React.FC = () => {
     URL.revokeObjectURL(url);
   }, [worldCells]);
 
-  const containerName = container?.cid || container?.name || 'Unknown';
+  // Error and warning handlers
+  const handleShowError = useCallback((title: string, message: string, details?: string[]) => {
+    setErrorDialog({
+      isOpen: true,
+      title,
+      message,
+      details
+    });
+  }, []);
+  
+  const handleShowWarning = useCallback((message: string) => {
+    setWarningBanner({
+      isVisible: true,
+      message
+    });
+  }, []);
+  
+  const handleCloseError = useCallback(() => {
+    setErrorDialog({ isOpen: false, title: '', message: '' });
+  }, []);
+  
+  const handleDismissWarning = useCallback(() => {
+    setWarningBanner({ isVisible: false, message: '' });
+  }, []);
+
+  // Display container info with designer metadata
+  const getContainerDisplayName = () => {
+    if (!container) return 'No container loaded';
+    
+    // For v1.0 containers, show designer info if available
+    if (container.designer?.name) {
+      return `${container.designer.name} (${container.cells?.length || worldCells.size} cells)`;
+    }
+    
+    // Fallback to CID
+    return container.cid || 'Unknown container';
+  };
+  
+  const containerName = getContainerDisplayName();
   const cellCount = worldCells.size;
 
   return (
     <div className="puzzle-shape-page">
       <div className="shape-header">
         <h1>Puzzle Shape</h1>
+        
+        {/* Warning banner for CID mismatches */}
+        {warningBanner.isVisible && (
+          <WarningBanner
+            message={warningBanner.message}
+            onDismiss={handleDismissWarning}
+          />
+        )}
+        
         <ShapeToolbar
           containerName={containerName}
           cellCount={cellCount}
@@ -407,7 +477,32 @@ export const PuzzleShapePage: React.FC = () => {
           onClear={handleClear}
           liveCID={liveCID}
           canSave={cellCount % 4 === 0}
+          onShowError={handleShowError}
+          onShowWarning={handleShowWarning}
         />
+        
+        {/* Display container metadata */}
+        {container?.designer && (
+          <div className="container-metadata">
+            <div className="metadata-item">
+              <span className="metadata-label">Designer:</span>
+              <span className="metadata-value">{container.designer.name}</span>
+              {container.designer.email && (
+                <span className="metadata-email">({container.designer.email})</span>
+              )}
+            </div>
+            <div className="metadata-item">
+              <span className="metadata-label">Date:</span>
+              <span className="metadata-value">{container.designer.date}</span>
+            </div>
+            {container.version && (
+              <div className="metadata-item">
+                <span className="metadata-label">Version:</span>
+                <span className="metadata-value">{container.version}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       
       <div className="shape-viewer">
@@ -428,6 +523,15 @@ export const PuzzleShapePage: React.FC = () => {
           )}
         </ThreeCanvas>
       </div>
+      
+      {/* Error dialog */}
+      <ErrorDialog
+        isOpen={errorDialog.isOpen}
+        title={errorDialog.title}
+        message={errorDialog.message}
+        details={errorDialog.details}
+        onClose={handleCloseError}
+      />
     </div>
   );
 };

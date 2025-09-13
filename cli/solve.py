@@ -149,16 +149,27 @@ def main():
                 # Generate unique filename for multiple solutions
                 solution_count += 1
                 if int(args.max_results) > 1:
-                    # For multiple solutions, append number to filename
+                    # For multiple solutions, include container name and solution number
                     solution_path = Path(args.solution)
+                    container_path = Path(args.container)
+                    container_name = container_path.stem.replace(' ', '_')  # Replace spaces with underscores
+                    
                     base_name = solution_path.stem
                     extension = solution_path.suffix
-                    numbered_filename = f"{base_name}_{solution_count:03d}{extension}"
+                    numbered_filename = f"{container_name}_{base_name}_{solution_count:03d}{extension}"
                     numbered_path = solution_path.parent / numbered_filename
                     write_solution(str(numbered_path), sol, meta, pieces_used)
                 else:
-                    # Single solution, use original filename
-                    write_solution(args.solution, sol, meta, pieces_used)
+                    # Single solution, include container name
+                    solution_path = Path(args.solution)
+                    container_path = Path(args.container)
+                    container_name = container_path.stem.replace(' ', '_')  # Replace spaces with underscores
+                    
+                    base_name = solution_path.stem
+                    extension = solution_path.suffix
+                    single_filename = f"{container_name}_{base_name}{extension}"
+                    single_path = solution_path.parent / single_filename
+                    write_solution(str(single_path), sol, meta, pieces_used)
                 
                 emitted_solution = True
 
@@ -172,7 +183,17 @@ def main():
                     "piecesUsed": pieces_used, "placements": [],
                     "sid_state_sha256":"no_solution","sid_route_sha256":"no_solution",
                     "sid_state_canon_sha256": canonical_state_signature(set(), symGroup)}
-            write_solution(args.solution, stub, meta, pieces_used)
+            
+            # Include container name in no-solution stub filename too
+            solution_path = Path(args.solution)
+            container_path = Path(args.container)
+            container_name = container_path.stem.replace(' ', '_')
+            
+            base_name = solution_path.stem
+            extension = solution_path.suffix
+            stub_filename = f"{container_name}_{base_name}_no_solution{extension}"
+            stub_path = solution_path.parent / stub_filename
+            write_solution(str(stub_path), stub, meta, pieces_used)
 
 if __name__ == "__main__":
     main()

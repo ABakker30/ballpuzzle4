@@ -1,5 +1,6 @@
 import sys, json
 from pathlib import Path
+from src.io.container import load_container
 from src.io.solution_sig import canonical_state_signature
 from src.pieces.library_fcc_v1 import load_fcc_A_to_Y
 from src.solver.symbreak import container_symmetry_group
@@ -11,7 +12,17 @@ def main():
 
     sol_path = Path(sys.argv[1]); cont_path = Path(sys.argv[2])
     sol = json.loads(sol_path.read_text(encoding="utf-8"))
-    container = json.loads(cont_path.read_text(encoding="utf-8"))
+    
+    # Use v1.0 container loader with validation
+    try:
+        container = load_container(str(cont_path))
+    except ValueError as e:
+        print(f"Container validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Failed to load container: {e}", file=sys.stderr)
+        sys.exit(1)
+    
     container_cells = {tuple(map(int,c)) for c in container["coordinates"]}
     lib = load_fcc_A_to_Y()
 

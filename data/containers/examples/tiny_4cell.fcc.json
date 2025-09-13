@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "lattice": "fcc",
+  "cells": [
+    [0, 0, 0],
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1]
+  ],
+  "cid": "sha256:56862bcae0009dd03e3147123f111874b23acb21aee7154ef87e7bcab7d6ab73",
+  "designer": {
+    "name": "Ball Puzzle Team",
+    "date": "2025-09-12",
+    "email": "team@ballpuzzle.example.com"
+  }
+}
