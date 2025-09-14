@@ -59,7 +59,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>Ballpuzzle UI</h1>
+        <h1>Koos Puzzle</h1>
         <div className="tabs">
           <TabButton id="shape" label="Puzzle Shape" />
           <TabButton id="solve" label="Solve Puzzle" />

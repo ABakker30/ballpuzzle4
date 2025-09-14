@@ -105,8 +105,12 @@ export const SolutionToolbar: React.FC<SolutionToolbarProps> = ({
   return (
     <div className="shape-toolbar">
       <div className="toolbar-section">
-        <button className="button" onClick={handleLoadClick}>
-          Load Solution
+        <button 
+          className="button" 
+          onClick={handleLoadClick}
+          title="Load solution from file"
+        >
+          Load
         </button>
         <input
           ref={fileInputRef}
