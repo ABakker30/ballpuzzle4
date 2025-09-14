@@ -25,6 +25,7 @@ export const PuzzleShapePage: React.FC = () => {
   const [redoStack, setRedoStack] = useState<Array<{type: 'add' | 'remove', cell: WorldCell}>>([]);
   const [liveCID, setLiveCID] = useState<string>('');
   const [brightness] = useState<number>(4.0);
+  const [editMode, setEditMode] = useState<'add' | 'delete'>('add');
   const canvasRef = useRef<ThreeCanvasRef>(null);
   
   // Dialog and warning states
@@ -378,7 +379,7 @@ export const PuzzleShapePage: React.FC = () => {
     const jsonContent = JSON.stringify(containerData, null, 2);
     const defaultFilename = `container_${cid.slice(6, 14)}.fcc.json`;
     
-    // Try File System Access API first (modern browsers)
+    // Use File System Access API for save dialog
     if ('showSaveFilePicker' in window) {
       try {
         const fileHandle = await (window as any).showSaveFilePicker({
@@ -394,23 +395,18 @@ export const PuzzleShapePage: React.FC = () => {
         await writable.close();
         return;
       } catch (error) {
-        // User cancelled or error occurred, fall back to download
-        if ((error as Error).name !== 'AbortError') {
-          console.warn('File System Access API failed:', error);
+        // User cancelled - don't show error for cancellation
+        if ((error as Error).name === 'AbortError') {
+          return;
         }
+        console.warn('File System Access API failed:', error);
+        handleShowError('Save Failed', 'Unable to save file. Your browser may not support the file save dialog.');
+        return;
       }
     }
     
-    // Fallback: automatic download
-    const blob = new Blob([jsonContent], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = defaultFilename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Browser doesn't support File System Access API
+    handleShowError('Save Not Supported', 'Your browser does not support the file save dialog. Please use a modern browser like Chrome, Edge, or Firefox.');
   }, [worldCells]);
 
   // Error and warning handlers
@@ -457,7 +453,6 @@ export const PuzzleShapePage: React.FC = () => {
   return (
     <div className="puzzle-shape-page">
       <div className="shape-header">
-        <h1>Puzzle Shape</h1>
         
         {/* Warning banner for CID mismatches */}
         {warningBanner.isVisible && (
@@ -477,32 +472,12 @@ export const PuzzleShapePage: React.FC = () => {
           onClear={handleClear}
           liveCID={liveCID}
           canSave={cellCount % 4 === 0}
+          editMode={editMode}
+          onEditModeChange={setEditMode}
           onShowError={handleShowError}
           onShowWarning={handleShowWarning}
         />
         
-        {/* Display container metadata */}
-        {container?.designer && (
-          <div className="container-metadata">
-            <div className="metadata-item">
-              <span className="metadata-label">Designer:</span>
-              <span className="metadata-value">{container.designer.name}</span>
-              {container.designer.email && (
-                <span className="metadata-email">({container.designer.email})</span>
-              )}
-            </div>
-            <div className="metadata-item">
-              <span className="metadata-label">Date:</span>
-              <span className="metadata-value">{container.designer.date}</span>
-            </div>
-            {container.version && (
-              <div className="metadata-item">
-                <span className="metadata-label">Version:</span>
-                <span className="metadata-value">{container.version}</span>
-              </div>
-            )}
-          </div>
-        )}
       </div>
       
       <div className="shape-viewer">
@@ -516,6 +491,7 @@ export const PuzzleShapePage: React.FC = () => {
               radius={sphereRadius}
               scene={scene}
               camera={camera}
+              editMode={editMode}
               onAdd={handleAddCell}
               onRemove={handleRemoveCell}
               onRequestFit={() => {}}

@@ -13,6 +13,8 @@ export interface ShapeToolbarProps {
   onClear: () => void;
   liveCID: string;
   canSave: boolean;
+  editMode: 'add' | 'delete';
+  onEditModeChange: (mode: 'add' | 'delete') => void;
   onShowError?: (title: string, message: string, details?: string[]) => void;
   onShowWarning?: (message: string) => void;
 }
@@ -27,6 +29,8 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
   liveCID = '',
   canSave = true,
   onClear,
+  editMode,
+  onEditModeChange,
   onShowError,
   onShowWarning
 }) => {
@@ -102,8 +106,12 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
   return (
     <div className="shape-toolbar">
       <div className="toolbar-section">
-        <button className="button" onClick={handleLoadClick} disabled={isLoading}>
-          {isLoading ? 'Loading...' : 'Load Shape'}
+        <button 
+          className="button" 
+          onClick={handleLoadClick}
+          title="Load shape from file"
+        >
+          Load
         </button>
         <input
           ref={fileInputRef}
@@ -114,6 +122,16 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
         />
       </div>
 
+      <div className="toolbar-section">
+        {/* Edit Mode Toggle */}
+        <button
+          className={`edit-mode-toggle ${editMode === 'add' ? 'add-mode' : 'delete-mode'}`}
+          onClick={() => onEditModeChange(editMode === 'add' ? 'delete' : 'add')}
+          title={editMode === 'add' ? 'Switch to Delete Mode' : 'Switch to Add Mode'}
+        >
+          {editMode === 'add' ? '+' : '−'}
+        </button>
+      </div>
 
       <div className="toolbar-section">
         <button 
@@ -122,14 +140,7 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
           disabled={!canSave}
           title={!canSave ? `Cell count must be divisible by 4 (current: ${cellCount})` : 'Save shape to file'}
         >
-          Save Shape
-        </button>
-        <button 
-          className="button" 
-          onClick={onClear}
-          title="Clear all cells"
-        >
-          Clear
+          Save
         </button>
       </div>
 
@@ -137,19 +148,9 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
       <div className="toolbar-section">
         <div className="stats-chips">
           <div className="chip">
-            <span className="chip-label">Container:</span>
-            <span className="chip-value">{containerName}</span>
-          </div>
-          <div className="chip">
             <span className="chip-label">Cells:</span>
             <span className="chip-value">{cellCount}</span>
           </div>
-          {liveCID && (
-            <div className="chip">
-              <span className="chip-label">CID:</span>
-              <span className="chip-value">{liveCID.slice(6, 14)}</span>
-            </div>
-          )}
         </div>
       </div>
     </div>

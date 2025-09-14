@@ -8,6 +8,7 @@ export interface ShapeEditor3DProps {
   radius?: number;
   scene?: THREE.Scene | null;
   camera?: THREE.PerspectiveCamera | null;
+  editMode?: 'add' | 'delete';
   onAdd?: (cell: WorldCell) => void;
   onRemove?: (cell: WorldCell) => void;
   onHover?: (cell: WorldCell | null, willAdd?: boolean) => void;
@@ -20,6 +21,7 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
   radius = 0.4,
   scene,
   camera,
+  editMode = 'add',
   onAdd,
   onRemove,
   onHover,
@@ -80,17 +82,17 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     
     let targetCell: WorldCell | null = null;
 
-    // First try to intersect with existing cells
-    if (meshRef.current && cells.length > 0) {
-      const intersects = raycasterRef.current.intersectObject(meshRef.current);
-      if (intersects.length > 0 && intersects[0].instanceId !== undefined) {
-        const instanceId = intersects[0].instanceId;
-        targetCell = cellIndexMapRef.current.get(instanceId) || null;
+    if (editMode === 'delete') {
+      // Delete mode: Only react to existing cells, ignore neighbors
+      if (meshRef.current && cells.length > 0) {
+        const intersects = raycasterRef.current.intersectObject(meshRef.current);
+        if (intersects.length > 0 && intersects[0].instanceId !== undefined) {
+          const instanceId = intersects[0].instanceId;
+          targetCell = cellIndexMapRef.current.get(instanceId) || null;
+        }
       }
-    }
-
-    // If no existing cell hit, check if we're hovering over a valid neighbor position
-    if (!targetCell) {
+    } else {
+      // Add mode: Only show neighbors, ignore existing cells
       // Get all valid neighbor positions (adjacent to existing cells)
       const validNeighbors = cells.length > 0 ? validNeighborsRef.current : [];
       
@@ -136,21 +138,39 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       }
     }
 
-    // Determine if this would be an add or remove operation
+    // Determine if this would be an add or remove operation based on edit mode
     let isAddOperation = false;
     if (targetCell) {
-      const cellExists = cells.some(cell => keyW(cell.X, cell.Y, cell.Z) === keyW(targetCell.X, targetCell.Y, targetCell.Z));
-      isAddOperation = !cellExists;
+      if (editMode === 'add') {
+        // In add mode, we only target neighbors, so it's always an add operation
+        isAddOperation = true;
+      } else {
+        // In delete mode, we only target existing cells, so it's always a remove operation
+        isAddOperation = false;
+      }
     }
 
-    // Reset all sphere colors to blue first
+    // Set sphere colors based on edit mode and hover state
     if (meshRef.current && meshRef.current.instanceColor) {
-      const blueColor = new THREE.Color(0x4da6ff);
       const colors = meshRef.current.instanceColor.array as Float32Array;
+      
       for (let i = 0; i < cells.length; i++) {
-        colors[i * 3] = blueColor.r;     // Red component
-        colors[i * 3 + 1] = blueColor.g; // Green component
-        colors[i * 3 + 2] = blueColor.b; // Blue component
+        const cell = cells[i];
+        const isHovered = targetCell && 
+          cell.X === targetCell.X && cell.Y === targetCell.Y && cell.Z === targetCell.Z;
+        
+        if (editMode === 'delete' && isHovered) {
+          // In delete mode, turn hovered existing cells pure red
+          colors[i * 3] = 1.0;     // Pure red
+          colors[i * 3 + 1] = 0.0; // No green
+          colors[i * 3 + 2] = 0.0; // No blue
+        } else {
+          // Normal blue color for existing cells (traditional blue)
+          const blueColor = new THREE.Color(0x4da6ff);
+          colors[i * 3] = blueColor.r;     // Red component
+          colors[i * 3 + 1] = blueColor.g; // Green component
+          colors[i * 3 + 2] = blueColor.b; // Blue component
+        }
       }
       meshRef.current.instanceColor.needsUpdate = true;
     }
@@ -163,7 +183,7 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       onHover?.(targetCell);
       
       if (isAddOperation) {
-        // Show green highlight for add operation
+        // Show green highlight for add operation (neighbors only)
         if (highlightMeshRef.current) {
           highlightMeshRef.current.position.set(targetCell.X * scale, targetCell.Y * scale, targetCell.Z * scale);
           const material = highlightMeshRef.current.material as THREE.MeshStandardMaterial;
@@ -171,12 +191,9 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
           highlightMeshRef.current.visible = true;
         }
       } else {
-        // For delete operation, show red highlight at the same position as the sphere
+        // For delete operation, don't show separate highlight - the cell itself turns red
         if (highlightMeshRef.current) {
-          highlightMeshRef.current.position.set(targetCell.X * scale, targetCell.Y * scale, targetCell.Z * scale);
-          const material = highlightMeshRef.current.material as THREE.MeshStandardMaterial;
-          material.color.setHex(0xff0000); // Red for delete
-          highlightMeshRef.current.visible = true;
+          highlightMeshRef.current.visible = false;
         }
       }
     } else {
@@ -267,10 +284,16 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
 
   const handleClick = useCallback((event: MouseEvent) => {
     console.log('=== CLICK HANDLER CALLED ===');
+    console.log('Event:', event);
+    console.log('Event target:', event.target);
     console.log('hoveredCell:', hoveredCell);
     console.log('isCameraMoving:', isCameraMoving);
     console.log('onAdd function:', onAdd);
     console.log('onRemove function:', onRemove);
+    
+    // Prevent default behavior and stop propagation
+    event.preventDefault();
+    event.stopPropagation();
     
     if (!hoveredCell) {
       console.log('Click ignored: no hovered cell');
@@ -288,26 +311,50 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       return;
     }
 
-    // Auto-detect operation based on whether cell exists
-    const cellExists = cells.some(cell => keyW(cell.X, cell.Y, cell.Z) === keyW(hoveredCell.X, hoveredCell.Y, hoveredCell.Z));
-    console.log('Cell exists:', cellExists);
+    console.log('Edit mode:', editMode);
+    console.log('Hovered cell:', hoveredCell);
+    console.log('Cells array length:', cells.length);
 
-    if (cellExists) {
-      // Cell exists, remove it
-      console.log('Calling onRemove with:', hoveredCell);
-      onRemove?.(hoveredCell);
-    } else if (isValidWorldCell(hoveredCell.X, hoveredCell.Y, hoveredCell.Z) && 
-               (cells.length === 0 || isAdjacentToExistingCells(hoveredCell, cells))) {
-      // Cell doesn't exist, is valid FCC, and is adjacent to existing cells (or first cell)
-      console.log('Calling onAdd with:', hoveredCell);
-      onAdd?.(hoveredCell);
+    // Handle operation based on edit mode
+    if (editMode === 'delete') {
+      // Delete mode: Only remove existing cells
+      const cellExists = cells.some(cell => keyW(cell.X, cell.Y, cell.Z) === keyW(hoveredCell.X, hoveredCell.Y, hoveredCell.Z));
+      console.log('Delete mode - cell exists:', cellExists);
+      if (cellExists) {
+        console.log('Calling onRemove with:', hoveredCell);
+        if (onRemove) {
+          onRemove(hoveredCell);
+          console.log('onRemove called successfully');
+        } else {
+          console.log('ERROR: onRemove is not defined!');
+        }
+      } else {
+        console.log('Delete blocked - cell does not exist');
+      }
     } else {
-      console.log('Add operation blocked - invalid cell or not adjacent');
-      console.log('isValidWorldCell:', isValidWorldCell(hoveredCell.X, hoveredCell.Y, hoveredCell.Z));
-      console.log('cells.length:', cells.length);
-      console.log('isAdjacentToExistingCells:', cells.length > 0 ? isAdjacentToExistingCells(hoveredCell, cells) : 'N/A (first cell)');
+      // Add mode: Only add new cells at neighbor positions
+      const cellExists = cells.some(cell => keyW(cell.X, cell.Y, cell.Z) === keyW(hoveredCell.X, hoveredCell.Y, hoveredCell.Z));
+      const isValid = isValidWorldCell(hoveredCell.X, hoveredCell.Y, hoveredCell.Z);
+      const isAdjacent = cells.length === 0 || isAdjacentToExistingCells(hoveredCell, cells);
+      
+      console.log('Add mode checks:');
+      console.log('- Cell exists:', cellExists);
+      console.log('- Is valid world cell:', isValid);
+      console.log('- Is adjacent or first cell:', isAdjacent);
+      
+      if (!cellExists && isValid && isAdjacent) {
+        console.log('Calling onAdd with:', hoveredCell);
+        if (onAdd) {
+          onAdd(hoveredCell);
+          console.log('onAdd called successfully');
+        } else {
+          console.log('ERROR: onAdd is not defined!');
+        }
+      } else {
+        console.log('Add operation blocked - conditions not met');
+      }
     }
-  }, [hoveredCell, cells, onAdd, onRemove, isCameraMoving]);
+  }, [hoveredCell, cells, onAdd, onRemove, isCameraMoving, editMode]);
 
   // Set up instanced mesh and highlight
   useEffect(() => {
@@ -340,57 +387,53 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     highlightMeshRef.current = highlightMesh;
     scene.add(highlightMesh);
     
-    // If no cells, just return (highlight mesh is ready for first cell)
-    if (cells.length === 0) {
-      return;
+    // Create instanced mesh for cells
+    if (cells.length > 0) {
+      const geometry = new THREE.SphereGeometry(radius, 32, 16);
+      const material = new THREE.MeshStandardMaterial({ 
+        color: 0xffffff, // Use white base color to let instance colors show through
+        metalness: 0.3,
+        roughness: 0.4,
+        envMapIntensity: 0.8
+      });
+      
+      const mesh = new THREE.InstancedMesh(geometry, material, cells.length);
+      
+      // Set up instance colors
+      const colors = new Float32Array(cells.length * 3);
+      const blueColor = new THREE.Color(0x4da6ff);
+      for (let i = 0; i < cells.length; i++) {
+        colors[i * 3] = blueColor.r;     // Red component
+        colors[i * 3 + 1] = blueColor.g; // Green component
+        colors[i * 3 + 2] = blueColor.b; // Blue component
+      }
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(colors, 3);
+      
+      // Position instances
+      const matrix = new THREE.Matrix4();
+      for (let i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        matrix.setPosition(cell.X * scale, cell.Y * scale, cell.Z * scale);
+        mesh.setMatrixAt(i, matrix);
+      }
+      
+      mesh.instanceMatrix.needsUpdate = true;
+      scene.add(mesh);
+      meshRef.current = mesh;
+      
+      // Build cell index map for raycasting
+      cellIndexMapRef.current.clear();
+      for (let i = 0; i < cells.length; i++) {
+        cellIndexMapRef.current.set(i, cells[i]);
+      }
     }
 
-    // Create geometry and material for existing cells
-    const geometry = new THREE.SphereGeometry(radius, 32, 24);
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x4da6ff, // Lighter, brighter blue color for shape spheres
-      metalness: 0.3,
-      roughness: 0.4,
-      emissive: 0x111111,
-      emissiveIntensity: 0.1,
-    });
-
-    // Create new instanced mesh
-    const mesh = new THREE.InstancedMesh(geometry, material, cells.length);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    meshRef.current = mesh;
-
-    // Initialize instance colors (all blue by default)
-    const blueColor = new THREE.Color(0x4da6ff);
-    const colors = new Float32Array(cells.length * 3);
-    for (let i = 0; i < cells.length; i++) {
-      colors[i * 3] = blueColor.r;
-      colors[i * 3 + 1] = blueColor.g;
-      colors[i * 3 + 2] = blueColor.b;
-    }
-    mesh.instanceColor = new THREE.InstancedBufferAttribute(colors, 3);
-
-    // Update instance matrices
-    const matrix = new THREE.Matrix4();
-    for (let i = 0; i < cells.length; i++) {
-      const cell = cells[i];
-      matrix.setPosition(cell.X * scale, cell.Y * scale, cell.Z * scale);
-      mesh.setMatrixAt(i, matrix);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) {
-      mesh.instanceColor.needsUpdate = true;
-    }
-
-    scene.add(mesh);
-
-    // Cleanup
+    // Cleanup function
     return () => {
       if (meshRef.current) {
         scene.remove(meshRef.current);
-        geometry.dispose();
-        material.dispose();
+        meshRef.current.geometry?.dispose();
+        (meshRef.current.material as THREE.Material)?.dispose();
       }
       if (highlightMeshRef.current) {
         scene.remove(highlightMeshRef.current);
@@ -461,11 +504,22 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
 
   // Set up mouse event listeners
   useEffect(() => {
-    if (!scene) return;
+    if (!scene) {
+      console.log('No scene available for event listeners');
+      return;
+    }
 
-    const canvas = scene.userData?.canvas || document.querySelector('canvas');
-    if (!canvas) return;
+    // Find the canvas element - it should be the renderer's domElement
+    const canvas = document.querySelector('canvas');
+    console.log('Canvas found:', canvas);
+    console.log('Canvas parent:', canvas?.parentElement);
+    
+    if (!canvas) {
+      console.log('No canvas found for event listeners');
+      return;
+    }
 
+    console.log('Adding event listeners to canvas');
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('click', handleClick);
     canvas.addEventListener('mousedown', handleMouseDown);
@@ -473,6 +527,7 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
     canvas.addEventListener('wheel', handleWheel);
 
     return () => {
+      console.log('Removing event listeners from canvas');
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('click', handleClick);
       canvas.removeEventListener('mousedown', handleMouseDown);
