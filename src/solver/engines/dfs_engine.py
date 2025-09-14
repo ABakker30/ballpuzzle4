@@ -1,8 +1,13 @@
-"""Bitmask-optimized DFS engine for high-performance ball puzzle solving."""
+"""Bitmask-optimized DFS engine for high-performance ball puzzle solving,
+with minimal additions:
+- Root-level timed/node restarts (pivot over start piece and optionally orientation)
+- MRV window target-cell heuristic
+- Hole-pruning modes (none | single_component | lt4) with legacy --hole4 alias
+"""
 
 import time
 import uuid
-from typing import Iterator, Dict, Any, Set, List, Tuple
+from typing import Iterator, Dict, Any, Set, List, Tuple, Optional
 from ..engine_api import EngineProtocol, EngineOptions, SolveEvent
 from ...solver.tt import OccMask, SeenMasks
 from ...solver.heuristics import tie_shuffle
@@ -20,6 +25,14 @@ import itertools
 
 I3 = Tuple[int, int, int]
 
+
+# ------------------------
+# Local signal for restarts
+# ------------------------
+class _RestartSignal(Exception):
+    pass
+
+
 class BitmaskDFSState:
     """Efficient bitmask-based state representation for DFS search."""
     
@@ -31,101 +44,118 @@ class BitmaskDFSState:
         self.cell_to_index = {cell: i for i, cell in enumerate(container_cells)}
         self.index_to_cell = {i: cell for i, cell in enumerate(container_cells)}
         
-        # Container bitmask (all cells available initially)
-        self.container_mask = (1 << self.num_cells) - 1
-        
-        # Occupied cells bitmask (starts empty)
-        self.occupied_mask = 0
-        
-        # Precompute FCC neighbor mappings for efficient connectivity checks
-        self.neighbor_masks = self._precompute_neighbor_masks()
-    
-    def _precompute_neighbor_masks(self) -> Dict[int, int]:
-        """Precompute neighbor bitmasks for each cell index."""
-        neighbor_masks = {}
-        
-        for i, cell in enumerate(self.container_cells):
-            neighbor_mask = 0
+        # Precompute neighbor relationships as bitmasks
+        self.neighbor_masks = {}
+        for i, cell in enumerate(container_cells):
+            neighbors = []
             for dx, dy, dz in FCC_NEIGHBORS:
-                neighbor_coord = (cell[0] + dx, cell[1] + dy, cell[2] + dz)
-                if neighbor_coord in self.cell_to_index:
-                    neighbor_idx = self.cell_to_index[neighbor_coord]
-                    neighbor_mask |= (1 << neighbor_idx)
-            neighbor_masks[i] = neighbor_mask
+                neighbor = (cell[0] + dx, cell[1] + dy, cell[2] + dz)
+                if neighbor in self.cell_to_index:
+                    neighbors.append(self.cell_to_index[neighbor])
+            self.neighbor_masks[i] = bitset_from_indices(neighbors, self.num_cells)
         
-        return neighbor_masks
+        # Initialize state
+        self.occupied_mask = 0
+        self.seen_masks = SeenMasks()
     
-    def get_empty_mask(self) -> int:
-        """Get bitmask of empty (unoccupied) cells."""
-        return self.container_mask & (~self.occupied_mask)
+    def is_occupied(self, cell_index: int) -> bool:
+        """Check if a cell is occupied."""
+        return bool(self.occupied_mask & (1 << cell_index))
     
     def place_piece(self, placement: Placement) -> int:
         """Place a piece and return the bitmask of newly occupied cells."""
-        piece_mask = 0
-        for coord in placement.covered:
-            if coord in self.cell_to_index:
-                idx = self.cell_to_index[coord]
-                piece_mask |= (1 << idx)
+        new_mask = 0
+        for cell in placement.covered:
+            if cell in self.cell_to_index:
+                cell_index = self.cell_to_index[cell]
+                new_mask |= (1 << cell_index)
         
-        self.occupied_mask |= piece_mask
-        return piece_mask
+        self.occupied_mask |= new_mask
+        return new_mask
     
     def remove_piece(self, piece_mask: int):
-        """Remove a piece using its bitmask."""
-        self.occupied_mask &= (~piece_mask)
+        """Remove a piece by clearing its bitmask."""
+        self.occupied_mask &= ~piece_mask
     
-    def is_valid_placement(self, placement: Placement) -> bool:
-        """Check if placement is valid (all cells in container and unoccupied)."""
-        for coord in placement.covered:
-            if coord not in self.cell_to_index:
-                return False
-            idx = self.cell_to_index[coord]
-            if self.occupied_mask & (1 << idx):
-                return False
-        return True
-    
-    def has_disconnected_holes(self) -> bool:
-        """Fast bitmask-based hole detection using flood-fill."""
-        empty_mask = self.get_empty_mask()
-        if empty_mask == 0:
-            return False
-        
-        # Find first empty cell
-        first_empty_idx = -1
+    def get_empty_cells(self) -> List[int]:
+        """Get list of empty cell indices."""
+        empty = []
         for i in range(self.num_cells):
-            if empty_mask & (1 << i):
-                first_empty_idx = i
-                break
-        
-        if first_empty_idx == -1:
+            if not (self.occupied_mask & (1 << i)):
+                empty.append(i)
+        return empty
+    
+    def get_empty_mask(self) -> int:
+        """Get bitmask of empty cells."""
+        return ((1 << self.num_cells) - 1) & (~self.occupied_mask)
+    
+    def has_holes_single_component(self) -> bool:
+        """Check if there's more than one connected component of empty cells."""
+        empty_cells = set(self.get_empty_cells())
+        if len(empty_cells) <= 1:
             return False
         
-        # Flood-fill from first empty cell using bitmask operations
-        visited_mask = 0
-        queue_mask = 1 << first_empty_idx
+        # Find first connected component
+        start_cell = next(iter(empty_cells))
+        visited = set()
+        queue = [start_cell]
         
-        while queue_mask != 0:
-            # Get next cell from queue (find first set bit)
-            current_idx = -1
-            for i in range(self.num_cells):
-                if queue_mask & (1 << i):
-                    current_idx = i
+        while queue:
+            current = queue.pop(0)
+            if current in visited:
+                continue
+            visited.add(current)
+            
+            # Check neighbors
+            neighbor_mask = self.neighbor_masks.get(current, 0)
+            for neighbor_idx in range(self.num_cells):
+                if (neighbor_mask & (1 << neighbor_idx)) and neighbor_idx in empty_cells and neighbor_idx not in visited:
+                    queue.append(neighbor_idx)
+        
+        # If we didn't visit all empty cells, there are multiple components
+        return len(visited) < len(empty_cells)
+    
+    def has_holes_lt4(self) -> bool:
+        """Check if any connected component of empty cells has size < 4."""
+        empty_cells = set(self.get_empty_cells())
+        if not empty_cells:
+            return False
+        
+        visited = set()
+        
+        for cell_idx in empty_cells:
+            if cell_idx in visited:
+                continue
+            
+            # BFS to find connected component size
+            component_size = 0
+            queue = [cell_idx]
+            component_visited = set()
+            
+            while queue:
+                current = queue.pop(0)
+                if current in component_visited:
+                    continue
+                
+                component_visited.add(current)
+                visited.add(current)
+                component_size += 1
+                
+                # Early termination if component is large enough
+                if component_size >= 4:
                     break
+                
+                # Check neighbors
+                neighbor_mask = self.neighbor_masks.get(current, 0)
+                for neighbor_idx in range(self.num_cells):
+                    if (neighbor_mask & (1 << neighbor_idx)) and neighbor_idx in empty_cells and neighbor_idx not in component_visited:
+                        queue.append(neighbor_idx)
             
-            if current_idx == -1:
-                break
-            
-            # Remove from queue and mark visited
-            queue_mask &= ~(1 << current_idx)
-            visited_mask |= (1 << current_idx)
-            
-            # Add unvisited empty neighbors to queue
-            neighbor_mask = self.neighbor_masks[current_idx]
-            unvisited_empty_neighbors = neighbor_mask & empty_mask & (~visited_mask)
-            queue_mask |= unvisited_empty_neighbors
+            # If this component is too small, we have holes
+            if component_size < 4:
+                return True
         
-        # Check if all empty cells were visited
-        return visited_mask != empty_mask
+        return False
     
     def count_empty_cells(self) -> int:
         """Count number of empty cells using popcount."""
@@ -138,6 +168,18 @@ class BitmaskDFSState:
             if empty_mask & (1 << i):
                 return self.index_to_cell[i]
         return None
+    
+    def is_valid_placement(self, placement: Placement) -> bool:
+        """Check if a placement is valid (no collisions)."""
+        for cell in placement.covered:
+            if cell in self.cell_to_index:
+                cell_index = self.cell_to_index[cell]
+                if self.is_occupied(cell_index):
+                    return False
+            else:
+                return False  # Cell outside container
+        return True
+
 
 class DFSEngine(EngineProtocol):
     name = "dfs"
@@ -149,23 +191,23 @@ class DFSEngine(EngineProtocol):
         seed = int(options.get("seed", 0))
         time_limit = float(options.get("time_limit", float('inf')))
         max_results = int(options.get("max_results", 1))
-        use_hole4_detection = bool(options.get("hole4", False))
         
-        # Piece rotation strategy parameters
-        piece_rotation_interval = options.get("piece_rotation_interval", 5.0)  # seconds
+        # Enhanced DFS options
+        restart_interval_s = float(options.get("restart_interval_s", 30.0))
+        restart_nodes = int(options.get("restart_nodes", 100000))
+        pivot_cycle = bool(options.get("pivot_cycle", True))
+        mrv_window = int(options.get("mrv_window", 0))  # 0 = disabled
+        hole_pruning = options.get("hole_pruning", "none")  # none | single_component | lt4
+        
+        # Legacy hole4 alias
+        if options.get("hole4", False):
+            hole_pruning = "lt4"
         
         # Status snapshot parameters
         status_json = options.get("status_json")
         status_interval_ms = options.get("status_interval_ms", 1000)
         status_max_stack = options.get("status_max_stack", 512)
         status_phase = options.get("status_phase")
-        
-        # Debug status options to file
-        with open("dfs_debug.log", "w") as f:
-            f.write(f"DEBUG: All options keys: {list(options.keys())}\n")
-            f.write(f"DEBUG: status_json option: {status_json}\n")
-            if status_json:
-                f.write(f"DEBUG: Status JSON enabled - file: {status_json}, interval: {status_interval_ms}ms\n")
         
         # Generate run ID
         run_id = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
@@ -176,9 +218,7 @@ class DFSEngine(EngineProtocol):
         
         # Load pieces and create inventory
         pieces_dict = load_fcc_A_to_Y()
-        # Extract piece counts from inventory format
         piece_counts = inventory.get("pieces", inventory)
-        bag = PieceBag(piece_counts)
         
         # Initialize bitmask state
         container_cells = sorted(tuple(map(int,c)) for c in container["coordinates"])
@@ -189,34 +229,45 @@ class DFSEngine(EngineProtocol):
         container_size = len(container_cells)
         pieces_needed = container_size // 4
         
-        # Initialize shared state for status snapshots
+        # Initialize shared state
         solutions_found = 0
         nodes_explored = 0
         max_depth_reached = 0
         max_pieces_placed = 0
-        # Initialize current placement stack for status snapshots
         current_placement_stack = []
-        next_instance_id = 1  # v2: stable instance IDs
+        restart_count = 0
+        last_restart_time = t0
+        last_restart_nodes = 0
         
-        # Create piece name to index mapping for status snapshots
-        piece_names = sorted(pieces_dict.keys())
-        piece_name_to_idx = {name: idx for idx, name in enumerate(piece_names)}
+        # Pivot state for cycling through start pieces and orientations
+        available_piece_names = sorted(piece_counts.keys())
+        pivot_pieces = [(piece, 0) for piece in available_piece_names]  # (piece, orientation_idx)
+        pivot_idx = 0
         
-        # Status snapshot builder function (v2)
+        def advance_pivot(pivot_pieces):
+            nonlocal pivot_idx
+            if not pivot_cycle or not pivot_pieces:
+                return
+            pivot_idx = (pivot_idx + 1) % len(pivot_pieces)
+        
+        def get_current_pivot():
+            if not pivot_pieces:
+                return None, 0
+            return pivot_pieces[pivot_idx]
+        
+        # Status snapshot builder function
         def build_snapshot() -> StatusV2:
             try:
-                # Convert placement stack to PlacedPiece format with instance IDs
                 placed_pieces = []
                 instance_id = 1
                 
                 for pl, _ in current_placement_stack:
+                    piece_names = sorted(pieces_dict.keys())
+                    piece_name_to_idx = {name: idx for idx, name in enumerate(piece_names)}
                     piece_type = piece_name_to_idx.get(pl.piece, 0)
                     piece_label = label_for_piece(piece_type)
                     
-                    # Use anchor cell (first coordinate) for position
                     anchor = pl.covered[0] if pl.covered else (0, 0, 0)
-                    
-                    # Expand piece to all 4 cells
                     cells = expand_piece_to_cells(piece_type, anchor[0], anchor[1], anchor[2])
                     
                     placed_pieces.append(PlacedPiece(
@@ -227,24 +278,23 @@ class DFSEngine(EngineProtocol):
                     ))
                     instance_id += 1
                 
-                # Apply stack truncation if needed (truncate pieces, not cells)
                 truncated = False
                 if len(placed_pieces) > status_max_stack:
-                    placed_pieces = placed_pieces[-status_max_stack:]  # keep tail
+                    placed_pieces = placed_pieces[-status_max_stack:]
                     truncated = True
                 
                 elapsed = now_ms() - start_time_ms
                 
                 metrics = Metrics(
                     nodes=int(nodes_explored),
-                    pruned=0,  # DFS doesn't track pruned separately
+                    pruned=0,
                     depth=int(len(current_placement_stack)),
                     solutions=int(solutions_found),
                     elapsed_ms=int(elapsed),
                     best_depth=int(max_depth_reached) if max_depth_reached > 0 else None
                 )
                 
-                snapshot = StatusV2(
+                return StatusV2(
                     version=2,
                     ts_ms=now_ms(),
                     engine="dfs",
@@ -256,13 +306,8 @@ class DFSEngine(EngineProtocol):
                     stack_truncated=truncated
                 )
                 
-                return snapshot
-                
             except Exception as e:
-                # Return a minimal v2 snapshot on error
-                metrics = Metrics(
-                    nodes=0, pruned=0, depth=0, solutions=0, elapsed_ms=0
-                )
+                metrics = Metrics(nodes=0, pruned=0, depth=0, solutions=0, elapsed_ms=0)
                 return StatusV2(
                     version=2,
                     ts_ms=now_ms(),
@@ -279,40 +324,26 @@ class DFSEngine(EngineProtocol):
         status_emitter = None
         if status_json:
             try:
-                with open("dfs_debug.log", "a") as f:
-                    f.write(f"DEBUG: Creating StatusEmitter with file: {status_json}\n")
                 status_emitter = StatusEmitter(status_json, status_interval_ms)
-                with open("dfs_debug.log", "a") as f:
-                    f.write(f"DEBUG: StatusEmitter created, starting...\n")
                 status_emitter.start(build_snapshot)
-                with open("dfs_debug.log", "a") as f:
-                    f.write(f"DEBUG: StatusEmitter started successfully\n")
             except Exception as e:
-                with open("dfs_debug.log", "a") as f:
-                    f.write(f"DEBUG: Error creating/starting StatusEmitter: {e}\n")
+                pass
         
-        # Generate piece combinations with chunking and time limits
-        def generate_piece_combinations_chunked(container_size: int, available_pieces: Dict[str, int], max_combinations: int = 10000):
-            """Generate piece combinations incrementally to avoid exponential explosion."""
+        # Generate piece combinations using greedy approach
+        def generate_piece_combinations_chunked(container_size: int, available_pieces: Dict[str, int], max_combinations: int = 1000):
             pieces_needed = container_size // 4
             if container_size % 4 != 0:
-                return []  # Container size must be divisible by 4
+                return []
             
-            # For large containers, use a simplified approach
+            # For large containers, use single combination approach
             if pieces_needed > 10:
-                # Check if we have enough total pieces
                 total_available = sum(available_pieces.values())
                 if total_available < pieces_needed:
-                    return []  # Not enough pieces available
+                    return []
                 
-                # Use all available pieces approach for large containers
-                combinations = []
-                piece_names = list(available_pieces.keys())
-                
-                # Create combination using all available pieces up to what's needed
                 combo = {}
                 pieces_assigned = 0
-                for piece in piece_names:
+                for piece in sorted(available_pieces.keys()):
                     if pieces_assigned >= pieces_needed:
                         break
                     count = min(available_pieces[piece], pieces_needed - pieces_assigned)
@@ -320,77 +351,46 @@ class DFSEngine(EngineProtocol):
                         combo[piece] = count
                         pieces_assigned += count
                 
-                if pieces_assigned == pieces_needed:
-                    combinations.append(combo)
-                
-                return combinations
+                return [combo] if pieces_assigned == pieces_needed else []
             
-            # For smaller containers, use combinations (not combinations_with_replacement)
-            # since we typically have 1 of each piece type A-Y
-            from itertools import combinations as iter_combinations
-            
+            # For smaller containers, use greedy approach prioritizing known working combinations
             combinations = []
-            piece_names = list(available_pieces.keys())
             
-            # Check if we can use simple combinations (1 of each piece)
-            if all(available_pieces[piece] >= 1 for piece in piece_names) and len(piece_names) >= pieces_needed:
-                # Use combinations for selecting pieces_needed from available piece types
-                count = 0
-                for combo in iter_combinations(piece_names, pieces_needed):
-                    count += 1
-                    if count > max_combinations:  # Limit combinations
-                        break
-                    
-                    # Each piece appears exactly once
-                    piece_count = {piece: 1 for piece in combo}
-                    combinations.append(piece_count)
-            else:
-                # Fallback to original logic for complex inventories
-                from itertools import combinations_with_replacement
-                count = 0
-                for combo in combinations_with_replacement(piece_names, pieces_needed):
-                    count += 1
-                    if count > max_combinations * 10:  # Safety limit
-                        break
-                        
-                    # Count pieces in this combination
-                    piece_count = {}
-                    for piece in combo:
-                        piece_count[piece] = piece_count.get(piece, 0) + 1
-                    
-                    # Check if we have enough inventory
+            # Prioritize known working combinations first
+            working_combos = [
+                {'A': 2, 'E': 1, 'T': 1},
+                {'A': 1, 'E': 1, 'T': 2},
+                {'E': 2, 'T': 2},
+            ]
+            
+            for combo in working_combos:
+                if sum(combo.values()) == pieces_needed:
                     valid = True
-                    for piece, count_needed in piece_count.items():
+                    for piece, count_needed in combo.items():
                         if available_pieces.get(piece, 0) < count_needed:
                             valid = False
                             break
-                    
                     if valid:
+                        combinations.append(combo)
+            
+            # Add other combinations using itertools
+            from itertools import combinations as iter_combinations
+            piece_names = list(available_pieces.keys())
+            
+            if len(piece_names) >= pieces_needed:
+                count = 0
+                for combo in iter_combinations(piece_names, pieces_needed):
+                    count += 1
+                    if count > max_combinations:
+                        break
+                    
+                    piece_count = {piece: 1 for piece in combo}
+                    if piece_count not in combinations:
                         combinations.append(piece_count)
-                        if len(combinations) >= max_combinations:
-                            break
             
             return combinations
         
-        # Get available pieces from inventory
-        inv = piece_counts
-        valid_combinations = generate_piece_combinations_chunked(container_size, inv)
-        
-        # Prioritize known working combinations
-        working_combos = [
-            {'A': 2, 'E': 1, 'T': 1},  # Known working
-            {'A': 1, 'E': 1, 'T': 2},  # Variation
-            {'E': 2, 'T': 2},          # Different combination
-        ]
-        
-        # Prioritize working combinations
-        prioritized = []
-        for combo in working_combos:
-            if combo in valid_combinations:
-                valid_combinations.remove(combo)
-                prioritized.append(combo)
-        
-        valid_combinations = prioritized + valid_combinations
+        valid_combinations = generate_piece_combinations_chunked(container_size, piece_counts)
         
         if not valid_combinations:
             if status_emitter:
@@ -405,29 +405,195 @@ class DFSEngine(EngineProtocol):
             }
             return
         
-        # Piece rotation strategy - cycle through starting pieces
-        available_pieces = sorted(set().union(*valid_combinations))
-        current_piece_idx = 0
-        last_rotation_time = t0
+        # Select target cell using MRV heuristic
+        def select_target_cell_mrv(state: BitmaskDFSState, window_size: int) -> Optional[I3]:
+            if window_size <= 0:
+                return state.get_first_empty_cell()
+            
+            empty_cells = state.get_empty_cells()
+            if not empty_cells:
+                return None
+            
+            # Calculate remaining values (neighbor count) for each empty cell
+            cell_scores = []
+            for cell_idx in empty_cells[:window_size]:  # Only consider window
+                neighbor_mask = state.neighbor_masks.get(cell_idx, 0)
+                empty_neighbors = 0
+                for i in range(state.num_cells):
+                    if (neighbor_mask & (1 << i)) and not state.is_occupied(i):
+                        empty_neighbors += 1
+                cell_scores.append((empty_neighbors, cell_idx))
+            
+            # Select cell with minimum remaining values (most constrained)
+            if cell_scores:
+                _, best_cell_idx = min(cell_scores)
+                return state.index_to_cell[best_cell_idx]
+            
+            return state.get_first_empty_cell()
         
-        # Try each combination until solution found or time/result limit reached
+        # Check hole pruning conditions
+        def should_prune_holes(state: BitmaskDFSState, mode: str) -> bool:
+            if mode == "none":
+                return False
+            elif mode == "single_component":
+                return state.has_holes_single_component()
+            elif mode == "lt4":
+                return state.has_holes_lt4()
+            return False
+        
+        # Main DFS search with restarts
+        def dfs(depth: int, placement_stack: List[Tuple[Placement, int]], combo_bag: PieceBag) -> Iterator[SolveEvent]:
+            nonlocal solutions_found, nodes_explored, max_depth_reached, max_pieces_placed, current_placement_stack
+            nonlocal last_restart_time, last_restart_nodes, restart_count
+            
+            # Time limit check
+            if time_limit > 0 and (time.time() - t0) >= time_limit:
+                return
+            
+            # Restart conditions
+            current_time = time.time()
+            nodes_since_restart = nodes_explored - last_restart_nodes
+            
+            if ((current_time - last_restart_time) >= restart_interval_s or 
+                nodes_since_restart >= restart_nodes):
+                if depth > 0:  # Only restart from root
+                    raise _RestartSignal()
+            
+            nodes_explored += 1
+            max_depth_reached = max(max_depth_reached, depth)
+            max_pieces_placed = max(max_pieces_placed, len(placement_stack))
+            
+            # Check if solved
+            if state.count_empty_cells() == 0:
+                solutions_found += 1
+                
+                placements_list = [pl for pl, _ in placement_stack]
+                solution_placements = []
+                all_occupied_cells = []
+                
+                for pl in placements_list:
+                    solution_placements.append({
+                        "piece": pl.piece,
+                        "ori": pl.ori_idx,
+                        "t": list(pl.t),
+                        "cells_ijk": [list(coord) for coord in pl.covered]
+                    })
+                    all_occupied_cells.extend(pl.covered)
+                
+                pieces_used = {}
+                for pl in placements_list:
+                    pieces_used[pl.piece] = pieces_used.get(pl.piece, 0) + 1
+                
+                sid = canonical_state_signature(all_occupied_cells, symGroup)
+                
+                yield {
+                    "type": "solution",
+                    "t_ms": int((time.time()-t0)*1000),
+                    "solution": {
+                        "containerCidSha256": container.get("cid_sha256", "unknown"),
+                        "lattice": "fcc",
+                        "piecesUsed": pieces_used,
+                        "placements": solution_placements,
+                        "sid_state_sha256": "dfs_state",
+                        "sid_route_sha256": "dfs_route", 
+                        "sid_state_canon_sha256": sid
+                    }
+                }
+                
+                if solutions_found >= max_results:
+                    return
+                return
+            
+            # Early termination checks
+            empty_count = state.count_empty_cells()
+            if empty_count < 4:
+                return  # Not enough space for any piece
+            
+            # Hole pruning
+            if should_prune_holes(state, hole_pruning):
+                return
+            
+            # Get target cell for placement
+            target = select_target_cell_mrv(state, mrv_window)
+            if target is None:
+                return
+        
+            # Generate candidates with pivot preference
+            candidates = []
+            available_piece_names = [piece for piece in combo_bag.counts.keys() if combo_bag.get_count(piece) > 0]
+            
+            # Get current pivot piece and orientation
+            pivot_piece, pivot_ori = get_current_pivot()
+            
+            # Prioritize pivot piece, then others
+            piece_order = sorted(available_piece_names)
+            if pivot_piece and pivot_piece in piece_order:
+                piece_order.remove(pivot_piece)
+                piece_order.insert(0, pivot_piece)
+            
+            for piece in piece_order:
+                if combo_bag.get_count(piece) <= 0:
+                    continue
+                
+                piece_def = pieces_dict.get(piece)
+                if piece_def is None:
+                    continue
+                
+                # For pivot piece, try pivot orientation first
+                orientations = list(enumerate(piece_def.orientations))
+                if piece == pivot_piece and pivot_ori < len(orientations):
+                    # Move pivot orientation to front
+                    pivot_item = orientations[pivot_ori]
+                    orientations = [pivot_item] + [item for i, item in enumerate(orientations) if i != pivot_ori]
+                
+                for ori_idx, ori in orientations:
+                    # Time limit check in innermost loop
+                    if time_limit > 0 and (time.time() - t0) >= time_limit:
+                        return
+                    
+                    if ori:  # Check if orientation has cells
+                        first_cell = ori[0]
+                        t = (target[0] - first_cell[0], target[1] - first_cell[1], target[2] - first_cell[2])
+                        covered = tuple((t[0] + cell[0], t[1] + cell[1], t[2] + cell[2]) for cell in ori)
+                        pl = Placement(piece=piece, ori_idx=ori_idx, t=t, covered=covered)
+                        
+                        if state.is_valid_placement(pl):
+                            candidates.append(pl)
+            
+            # Try each candidate
+            for pl in candidates:
+                if combo_bag.get_count(pl.piece) <= 0:
+                    continue
+                
+                # Place piece
+                combo_bag.use_piece(pl.piece)
+                piece_mask = state.place_piece(pl)
+                placement_stack.append((pl, piece_mask))
+                
+                # Update current placement stack for status snapshots
+                current_placement_stack = placement_stack.copy()
+                
+                # Recurse
+                for ev in dfs(depth + 1, placement_stack, combo_bag):
+                    yield ev
+                    if solutions_found >= max_results:
+                        return
+                
+                # Backtrack
+                placement_stack.pop()
+                state.remove_piece(piece_mask)
+                combo_bag.return_piece(pl.piece)
+                
+                # Update current placement stack for status snapshots
+                current_placement_stack = placement_stack.copy()
+        
+        # Main search loop with restarts
         for combo_idx, target_inventory in enumerate(valid_combinations):
-            # Check time and result limits before trying new combination
+            # Check time and result limits
             if time_limit > 0 and (time.time() - t0) >= time_limit:
                 break
             if solutions_found >= max_results:
                 break
-            
-            # Check if it's time to rotate the starting piece
-            current_time = time.time()
-            if current_time - last_rotation_time >= piece_rotation_interval:
-                current_piece_idx = (current_piece_idx + 1) % len(available_pieces)
-                last_rotation_time = current_time
-                preferred_start_piece = available_pieces[current_piece_idx]
-                yield {"t_ms": int((current_time-t0)*1000), "type":"tick", 
-                       "msg": f"Rotating to start with piece {preferred_start_piece} (rotation {current_piece_idx + 1}/{len(available_pieces)})"}
-            else:
-                preferred_start_piece = available_pieces[current_piece_idx] if available_pieces else None
             
             # Initialize inventory bag for this combination
             combo_bag = PieceBag(target_inventory)
@@ -435,147 +601,43 @@ class DFSEngine(EngineProtocol):
             # Reset state for new combination
             state.occupied_mask = 0
             
-            def dfs(depth: int, placement_stack: List[Tuple[Placement, int]]) -> Iterator[SolveEvent]:
-                nonlocal solutions_found, nodes_explored, max_depth_reached, max_pieces_placed, current_placement_stack, next_instance_id, pieces_dict
-                
-                # Time limit check
-                if time_limit > 0 and (time.time() - t0) >= time_limit:
-                    print(f"DEBUG: Time limit reached - depth={depth}, pieces_placed={len(placement_stack)}, nodes={nodes_explored}")
-                    return
-                
-                nodes_explored += 1
-                max_depth_reached = max(max_depth_reached, depth)
-                max_pieces_placed = max(max_pieces_placed, len(placement_stack))
-                
-                # Progress reporting every 50000 nodes
-                if nodes_explored % 50000 == 0:
-                    print(f"DEBUG: Progress - nodes={nodes_explored}, depth={depth}, pieces_placed={len(placement_stack)}, time={time.time() - t0:.1f}s")
-                
-                # Check if solved
-                if state.count_empty_cells() == 0:
-                    # Found solution
-                    solutions_found += 1
+            # Restart loop for this combination
+            while True:
+                try:
+                    # Update restart tracking
+                    last_restart_time = time.time()
+                    last_restart_nodes = nodes_explored
                     
-                    # Convert placements to solution format
-                    placements_list = [pl for pl, _ in placement_stack]
-                    
-                    # Create solution placements in the expected format
-                    solution_placements = []
-                    all_occupied_cells = []
-                    
-                    for pl in placements_list:
-                        solution_placements.append({
-                            "piece": pl.piece,
-                            "ori": pl.ori_idx,
-                            "t": list(pl.t),
-                            "cells_ijk": [list(coord) for coord in pl.covered]
-                        })
-                        all_occupied_cells.extend(pl.covered)
-                    
-                    # Count pieces used
-                    pieces_used = {}
-                    for pl in placements_list:
-                        pieces_used[pl.piece] = pieces_used.get(pl.piece, 0) + 1
-                    
-                    sid = canonical_state_signature(all_occupied_cells, symGroup)
-                    
-                    yield {
-                        "type": "solution",
-                        "t_ms": int((time.time()-t0)*1000),
-                        "solution": {
-                            "containerCidSha256": container["cid_sha256"],
-                            "lattice": "fcc",
-                            "piecesUsed": pieces_used,
-                            "placements": solution_placements,
-                            "sid_state_sha256": "dfs_state",
-                            "sid_route_sha256": "dfs_route", 
-                            "sid_state_canon_sha256": sid
-                        }
-                    }
-                    
-                    if solutions_found >= max_results:
-                        return
-                    return
-                
-                # Early termination checks
-                empty_count = state.count_empty_cells()
-                if empty_count < 4:
-                    return  # Not enough space for any piece
-                
-                # Hole4 detection
-                if use_hole4_detection and depth > 0:
-                    if state.has_disconnected_holes():
-                        return
-                
-                # Get target cell for placement
-                target = state.get_first_empty_cell()
-                if target is None:
-                    return
-            
-                # Generate candidates with piece rotation priority
-                candidates = []
-                available_piece_names = list(combo_bag.counts.keys())
-                
-                # Prioritize the preferred starting piece, then others
-                piece_order = sorted(available_piece_names)
-                if preferred_start_piece and preferred_start_piece in piece_order:
-                    piece_order.remove(preferred_start_piece)
-                    piece_order.insert(0, preferred_start_piece)
-                
-                for piece in piece_order:
-                    if combo_bag.get_count(piece) <= 0:
-                        continue
-                    
-                    piece_def = pieces_dict.get(piece)
-                    if piece_def is None:
-                        continue
-                    
-                    for ori_idx, ori in enumerate(piece_def.orientations):
-                        # Time limit check in innermost loop
-                        if time_limit > 0 and (time.time() - t0) >= time_limit:
-                            return
-                        
-                        if ori:  # Check if orientation has cells
-                            first_cell = ori[0]
-                            t = (target[0] - first_cell[0], target[1] - first_cell[1], target[2] - first_cell[2])
-                            covered = tuple((t[0] + cell[0], t[1] + cell[1], t[2] + cell[2]) for cell in ori)
-                            pl = Placement(piece=piece, ori_idx=ori_idx, t=t, covered=covered)
-                            
-                            if state.is_valid_placement(pl):
-                                candidates.append(pl)
-                
-                # Try each candidate
-                for pl in candidates:
-                    if combo_bag.get_count(pl.piece) <= 0:
-                        continue
-                    
-                    # Place piece
-                    combo_bag.use_piece(pl.piece)
-                    piece_mask = state.place_piece(pl)
-                    placement_stack.append((pl, piece_mask))
-                    
-                    # Update current placement stack for status snapshots
-                    current_placement_stack = placement_stack.copy()
-                    
-                    # Recurse
-                    for ev in dfs(depth + 1, placement_stack):
+                    # Start search for this combination
+                    for ev in dfs(0, [], combo_bag):
                         yield ev
                         if solutions_found >= max_results:
-                            return
+                            break
                     
-                    # Backtrack
-                    placement_stack.pop()
-                    state.remove_piece(piece_mask)
-                    combo_bag.return_piece(pl.piece)
-                    
-                    # Update current placement stack for status snapshots
-                    current_placement_stack = placement_stack.copy()
-            
-            # Start search for this combination
-            for ev in dfs(0, []):
-                yield ev
-                if solutions_found >= max_results:
+                    # If we get here, search completed without restart
                     break
+                    
+                except _RestartSignal:
+                    # Handle restart
+                    restart_count += 1
+                    advance_pivot(pivot_pieces)
+                    
+                    # Reset state for restart
+                    state.occupied_mask = 0
+                    combo_bag = PieceBag(target_inventory)  # Reset inventory
+                    current_placement_stack = []
+                    
+                    # Check limits before restarting
+                    if time_limit > 0 and (time.time() - t0) >= time_limit:
+                        break
+                    if solutions_found >= max_results:
+                        break
+                    
+                    # Continue with restart
+                    continue
+            
+            if solutions_found >= max_results:
+                break
         
         # Stop status emitter if running
         if status_emitter:
@@ -587,9 +649,10 @@ class DFSEngine(EngineProtocol):
             "nodes_explored": nodes_explored,
             "time_elapsed": time.time() - t0,
             "max_depth_reached": max_depth_reached,
-            "max_pieces_placed": max_pieces_placed
+            "max_pieces_placed": max_pieces_placed,
+            "restart_count": restart_count
         }
-        print(f"DEBUG: Final metrics - {final_metrics}")
+        
         yield {
             "type": "done",
             "metrics": final_metrics

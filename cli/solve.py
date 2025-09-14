@@ -86,6 +86,12 @@ def main():
     ap.add_argument("--support-bias", action="store_true", help="enable support-biased placement ordering")
     ap.add_argument("--hole4", action="store_true", help="enable hole4 detection pruning (disconnected void detection)")
     ap.add_argument("--piece-rotation-interval", type=float, default=5.0, help="seconds between piece rotation for diversified search (DFS engine only)")
+    # Enhanced DFS engine options
+    ap.add_argument("--restart-interval-s", type=float, default=30.0, help="DFS restart interval in seconds (default: 30.0)")
+    ap.add_argument("--restart-nodes", type=int, default=100000, help="DFS restart after N nodes explored (default: 100000)")
+    ap.add_argument("--pivot-cycle", action="store_true", help="enable pivot cycling over start piece and orientation")
+    ap.add_argument("--mrv-window", type=int, default=0, help="MRV window size for target cell selection (0=disabled, default: 0)")
+    ap.add_argument("--hole-pruning", choices=["none", "single_component", "lt4"], default="none", help="hole pruning mode (default: none)")
     # Status JSON emission
     ap.add_argument("--status-json", type=str, default=None, help="Path to write periodic status snapshot JSON (includes placement stack).")
     ap.add_argument("--status-interval-ms", type=int, default=1000, help="Interval for status emission in milliseconds (>=50).")
@@ -119,7 +125,7 @@ def main():
     meta = {"engine": engine.name, "seed": args.seed,
             "flags": {"mrvPieces": bool(args.mrv_pieces), "supportBias": bool(args.support_bias)}}
     # Build options bundle
-    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth), "maxRows": int(args.caps_max_rows)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms), "time_limit": int(args.time_limit) if args.time_limit > 0 else 0, "hole4": bool(args.hole4), "piece_rotation_interval": float(args.piece_rotation_interval), "status_json": args.status_json, "status_interval_ms": int(args.status_interval_ms), "status_max_stack": int(args.status_max_stack), "status_phase": args.status_phase}
+    options = {"seed": args.seed, "flags": meta["flags"], "caps": {"maxNodes": int(args.caps_max_nodes), "maxDepth": int(args.caps_max_depth), "maxRows": int(args.caps_max_rows)}, "max_results": int(args.max_results), "progress_interval_ms": int(args.progress_interval_ms), "time_limit": int(args.time_limit) if args.time_limit > 0 else 0, "hole4": bool(args.hole4), "piece_rotation_interval": float(args.piece_rotation_interval), "restart_interval_s": float(args.restart_interval_s), "restart_nodes": int(args.restart_nodes), "pivot_cycle": bool(args.pivot_cycle), "mrv_window": int(args.mrv_window), "hole_pruning": args.hole_pruning, "status_json": args.status_json, "status_interval_ms": int(args.status_interval_ms), "status_max_stack": int(args.status_max_stack), "status_phase": args.status_phase}
 
     emitted_solution = False
     solution_count = 0
