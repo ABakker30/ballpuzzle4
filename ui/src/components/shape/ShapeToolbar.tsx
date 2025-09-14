@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { ContainerV1, EngineCell } from '../../types/shape';
 import { engineToWorldInt } from '../../lib/lattice';
 import { loadContainerV1, ContainerLoadResponse } from '../../lib/container-loader';
+import { Slider } from '../common/Slider';
 
 export interface ShapeToolbarProps {
   containerName: string;
@@ -17,6 +18,8 @@ export interface ShapeToolbarProps {
   onEditModeChange: (mode: 'add' | 'delete') => void;
   onShowError?: (title: string, message: string, details?: string[]) => void;
   onShowWarning?: (message: string) => void;
+  brightness: number;
+  onBrightnessChange: (brightness: number) => void;
 }
 
 export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
@@ -32,7 +35,9 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
   editMode,
   onEditModeChange,
   onShowError,
-  onShowWarning
+  onShowWarning,
+  brightness,
+  onBrightnessChange
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -144,6 +149,20 @@ export const ShapeToolbar: React.FC<ShapeToolbarProps> = ({
         </button>
       </div>
 
+
+      <div className="toolbar-section">
+        <Slider
+          label="Brightness"
+          min={0.1}
+          max={8.0}
+          step={0.1}
+          value={brightness}
+          onChange={onBrightnessChange}
+          width="120px"
+          formatValue={(value) => `${value.toFixed(1)}`}
+          title="Adjust scene lighting brightness"
+        />
+      </div>
 
       <div className="toolbar-section">
         <div className="stats-chips">

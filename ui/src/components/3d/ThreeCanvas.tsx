@@ -100,7 +100,7 @@ export const ThreeCanvas = forwardRef<ThreeCanvasRef, ThreeCanvasProps>(
       controlsRef.current = controls;
 
       // Lighting setup - comprehensive multi-directional lighting
-      const ambientLight = new THREE.AmbientLight(0x404040, 1.2);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
       scene.add(ambientLight);
 
       // Main directional light (key light)

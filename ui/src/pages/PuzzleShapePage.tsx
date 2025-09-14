@@ -24,7 +24,7 @@ export const PuzzleShapePage: React.FC = () => {
   const [undoStack, setUndoStack] = useState<Array<{type: 'add' | 'remove', cell: WorldCell}>>([]);
   const [redoStack, setRedoStack] = useState<Array<{type: 'add' | 'remove', cell: WorldCell}>>([]);
   const [liveCID, setLiveCID] = useState<string>('');
-  const [brightness] = useState<number>(4.0);
+  const [brightness, setBrightness] = useState<number>(1.5);
   const [editMode, setEditMode] = useState<'add' | 'delete'>('add');
   const canvasRef = useRef<ThreeCanvasRef>(null);
   
@@ -476,6 +476,8 @@ export const PuzzleShapePage: React.FC = () => {
           onEditModeChange={setEditMode}
           onShowError={handleShowError}
           onShowWarning={handleShowWarning}
+          brightness={brightness}
+          onBrightnessChange={setBrightness}
         />
         
       </div>

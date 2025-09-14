@@ -165,8 +165,8 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
           colors[i * 3 + 1] = 0.0; // No green
           colors[i * 3 + 2] = 0.0; // No blue
         } else {
-          // Normal blue color for existing cells (traditional blue)
-          const blueColor = new THREE.Color(0x4da6ff);
+          // Normal blue color for existing cells (nicer blue)
+          const blueColor = new THREE.Color(0x2196f3);
           colors[i * 3] = blueColor.r;     // Red component
           colors[i * 3 + 1] = blueColor.g; // Green component
           colors[i * 3 + 2] = blueColor.b; // Blue component
@@ -401,7 +401,7 @@ export const ShapeEditor3D: React.FC<ShapeEditor3DProps> = ({
       
       // Set up instance colors
       const colors = new Float32Array(cells.length * 3);
-      const blueColor = new THREE.Color(0x4da6ff);
+      const blueColor = new THREE.Color(0x2196f3);
       for (let i = 0; i < cells.length; i++) {
         colors[i * 3] = blueColor.r;     // Red component
         colors[i * 3 + 1] = blueColor.g; // Green component
