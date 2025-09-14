@@ -19,7 +19,7 @@ interface SolutionViewer3DProps {
 
 export interface SolutionViewer3DRef {
   takeScreenshot: () => Promise<string>;
-  createMovie: (duration: number, showPlacement: boolean, showSeparation: boolean, onProgress?: (progress: number, phase: string) => void, abortSignal?: AbortSignal, aspectRatio?: 'portrait' | 'landscape' | 'square') => Promise<Blob>;
+  createMovie: (duration: number, fpsQuality: 'preview' | 'production' | 'high', showPlacement: boolean, placementPercentage: number, showSeparation: boolean, separationPercentage: number, onProgress?: (progress: number, phase: string) => void, abortSignal?: AbortSignal, aspectRatio?: 'square' | 'landscape' | 'portrait' | 'instagram_post') => Promise<Blob>;
 }
 
 // MPEG creation function using Web APIs
@@ -834,7 +834,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       return dataUrl;
     },
     
-    createMovie: async (duration: number, fpsQuality: 'preview' | 'production' | 'high', showPlacement: boolean, placementPercentage: number, showSeparation: boolean, separationPercentage: number, onProgress?: (progress: number, phase: string) => void, abortSignal?: AbortSignal, aspectRatio: 'square' | 'landscape' | 'portrait' | 'instagram_story' | 'instagram_post' = 'square', showRotation: boolean = false, rotationPercentage: number = 20, rotations: number = 1): Promise<Blob> => {
+    createMovie: async (duration: number, fpsQuality: 'preview' | 'production' | 'high', showPlacement: boolean, placementPercentage: number, showSeparation: boolean, separationPercentage: number, onProgress?: (progress: number, phase: string) => void, abortSignal?: AbortSignal, aspectRatio: 'square' | 'landscape' | 'portrait' | 'instagram_post' = 'square'): Promise<Blob> => {
       if (!canvasRef.current || !solution) {
         throw new Error('Canvas or solution not ready');
       }
@@ -864,7 +864,6 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       // Calculate frame allocation based on enabled animations and their percentages
       let placementFrames = 0;
       let separationFrames = 0;
-      let rotationFrames = 0;
       
       if (showPlacement) {
         placementFrames = Math.floor(totalFrames * (placementPercentage / 100));
@@ -872,12 +871,9 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       if (showSeparation) {
         separationFrames = Math.floor(totalFrames * (separationPercentage / 100));
       }
-      if (showRotation) {
-        rotationFrames = Math.floor(totalFrames * (rotationPercentage / 100));
-      }
       
       // If no animations are enabled, just show static frames
-      const staticFrames = totalFrames - Math.max(placementFrames, separationFrames, rotationFrames);
+      const staticFrames = totalFrames - Math.max(placementFrames, separationFrames);
       let frameIndex = 0;
       
       // Easing function (ease-in-out)
