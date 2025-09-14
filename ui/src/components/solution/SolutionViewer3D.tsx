@@ -399,6 +399,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       id: string;
       piece: string;
       instanceIndex: number;
+      placementIndex: number;
       cells: Array<{ x: number; y: number; z: number }>;
     }> = [];
     const allWorldCells: Array<{ x: number; y: number; z: number }> = [];
@@ -472,6 +473,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         id: `${piece}_${instanceIndex}`,
         piece,
         instanceIndex,
+        placementIndex,
         cells: placementCells
       });
     }
@@ -518,7 +520,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
     // Convert to unified piece groups with both spheres and bonds - each placement is individual
     console.log('SolutionViewer3D: Final individual placements:', individualPlacements);
     const unifiedGroups = individualPlacements.map((placement) => {
-      const { id, piece, instanceIndex, cells } = placement;
+      const { id, piece, instanceIndex, placementIndex, cells } = placement;
       console.log('SolutionViewer3D: Creating unified group for', id, 'with', cells.length, 'spheres');
       
       // Create sphere data
@@ -573,6 +575,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       
       return {
         piece: id, // Use unique ID instead of piece type
+        placementIndex, // Track original placement index for slider
         spheres: {
           positions: spherePositions,
           colors: sphereColors,
@@ -1252,8 +1255,9 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
               console.log(`Piece ${group.piece}: effectiveMaxPlacements=${effectiveMaxPlacements}, maxPlacements=${maxPlacements}, movieOverrides=${movieOverrides?.maxPlacements}`);
               
               if (effectiveMaxPlacements !== undefined && solution?.placements) {
-                const pieceIndex = solution.placements.findIndex(p => p.piece === group.piece);
-                if (pieceIndex >= 0) {
+                // Use the stored placement index instead of searching
+                const pieceIndex = (group as any).placementIndex;
+                if (pieceIndex !== undefined && pieceIndex >= 0) {
                   // Calculate smooth per-piece transition based on fractional placement value
                   const fractionalPlacement = effectiveMaxPlacements;
                   
