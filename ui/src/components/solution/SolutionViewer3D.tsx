@@ -149,6 +149,28 @@ const generatePieceColors = (): Record<string, string> => {
   return colors;
 };
 
+// Generate distinct colors for multiple instances of the same piece
+const generateInstanceColor = (basePiece: string, instanceIndex: number): string => {
+  const baseColor = PIECE_COLORS[basePiece] || '#888888';
+  const color = new THREE.Color(baseColor);
+  
+  // Apply HSL variations for different instances
+  const hsl = { h: 0, s: 0, l: 0 };
+  color.getHSL(hsl);
+  
+  // Vary hue, saturation, and lightness based on instance index
+  const hueShift = (instanceIndex * 137.5) % 360; // Golden angle for good distribution
+  const saturationMultiplier = 0.8 + (instanceIndex % 3) * 0.1; // 0.8, 0.9, 1.0
+  const lightnessMultiplier = 0.7 + (instanceIndex % 4) * 0.1; // 0.7, 0.8, 0.9, 1.0
+  
+  hsl.h = (hsl.h + hueShift / 360) % 1;
+  hsl.s = Math.min(1, hsl.s * saturationMultiplier);
+  hsl.l = Math.min(1, hsl.l * lightnessMultiplier);
+  
+  color.setHSL(hsl.h, hsl.s, hsl.l);
+  return '#' + color.getHexString();
+};
+
 const PIECE_COLORS = generatePieceColors();
 
 export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3DProps>(({
@@ -238,12 +260,22 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
     const pieceDirections: Record<string, THREE.Vector3> = {};
     const pieceSphereCount: Record<string, number> = {};
 
-    // Group placements by piece and calculate centroids
+    // Calculate centroids for individual piece instances
+    const pieceInstanceCounts: Record<string, number> = {};
     solution.placements.forEach((placement: Placement) => {
       const piece = placement.piece;
-      if (!pieceCentroids[piece]) {
-        pieceCentroids[piece] = new THREE.Vector3(0, 0, 0);
-        pieceSphereCount[piece] = 0;
+      
+      // Track instance count for this piece type
+      if (!pieceInstanceCounts[piece]) {
+        pieceInstanceCounts[piece] = 0;
+      }
+      const instanceIndex = pieceInstanceCounts[piece];
+      pieceInstanceCounts[piece]++;
+      
+      const pieceId = `${piece}_${instanceIndex}`;
+      if (!pieceCentroids[pieceId]) {
+        pieceCentroids[pieceId] = new THREE.Vector3(0, 0, 0);
+        pieceSphereCount[pieceId] = 0;
       }
 
       // Extract coordinates from placement - handle different formats
@@ -257,18 +289,18 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
         coordinates = [[placement.i, placement.j, placement.k]];
       }
 
-      // Add all coordinates for this piece to centroid calculation
+      // Add all coordinates for this piece instance to centroid calculation
       coordinates.forEach(coord => {
         const worldCoords = fccToWorld(coord[0], coord[1], coord[2]);
-        pieceCentroids[piece].add(new THREE.Vector3(worldCoords.x, worldCoords.y, worldCoords.z));
-        pieceSphereCount[piece]++;
+        pieceCentroids[pieceId].add(new THREE.Vector3(worldCoords.x, worldCoords.y, worldCoords.z));
+        pieceSphereCount[pieceId]++;
       });
     });
 
     // Average to get true centroids
-    Object.keys(pieceCentroids).forEach(piece => {
-      pieceCentroids[piece].divideScalar(pieceSphereCount[piece]);
-      console.log(`Piece ${piece} centroid: [${pieceCentroids[piece].x.toFixed(3)}, ${pieceCentroids[piece].y.toFixed(3)}, ${pieceCentroids[piece].z.toFixed(3)}] (${pieceSphereCount[piece]} spheres)`);
+    Object.keys(pieceCentroids).forEach(pieceId => {
+      pieceCentroids[pieceId].divideScalar(pieceSphereCount[pieceId]);
+      console.log(`Piece ${pieceId} centroid: [${pieceCentroids[pieceId].x.toFixed(3)}, ${pieceCentroids[pieceId].y.toFixed(3)}, ${pieceCentroids[pieceId].z.toFixed(3)}] (${pieceSphereCount[pieceId]} spheres)`);
     });
 
     // Recompute convex hull after orientation to get accurate centroid for camera pivot
@@ -276,8 +308,8 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
     
     // Collect all oriented sphere positions for hull computation
     const orientedPoints: THREE.Vector3[] = [];
-    Object.keys(pieceCentroids).forEach(piece => {
-      const pieceGroup = pieceGroups.find(group => group.piece === piece);
+    Object.keys(pieceCentroids).forEach(pieceId => {
+      const pieceGroup = pieceGroups.find(group => group.piece === pieceId);
       if (pieceGroup && pieceGroup.spheres && pieceGroup.spheres.positions) {
         // Extract positions from Float32Array (x, y, z triplets)
         const positions = pieceGroup.spheres.positions;
@@ -319,19 +351,19 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
     // Calculate baseline vectors (v_i = c_i - p) and max radius
     let maxRadius = 0;
     console.log('SolutionViewer3D: Calculating baseline vectors from pivot:', pivot.toArray());
-    Object.keys(pieceCentroids).forEach(piece => {
-      const centroid = pieceCentroids[piece];
+    Object.keys(pieceCentroids).forEach(pieceId => {
+      const centroid = pieceCentroids[pieceId];
       const baselineVector = centroid.clone().sub(pivot); // v_i = c_i - p
       const radius = baselineVector.length();
       
-      console.log(`Piece ${piece}: centroid=[${centroid.x.toFixed(3)}, ${centroid.y.toFixed(3)}, ${centroid.z.toFixed(3)}], baseline=[${baselineVector.x.toFixed(3)}, ${baselineVector.y.toFixed(3)}, ${baselineVector.z.toFixed(3)}], radius=${radius.toFixed(3)}`);
+      console.log(`Piece ${pieceId}: centroid=[${centroid.x.toFixed(3)}, ${centroid.y.toFixed(3)}, ${centroid.z.toFixed(3)}], baseline=[${baselineVector.x.toFixed(3)}, ${baselineVector.y.toFixed(3)}, ${baselineVector.z.toFixed(3)}], radius=${radius.toFixed(3)}`);
       
       if (radius > 0.001) { // Avoid pieces at pivot
-        pieceDirections[piece] = baselineVector; // Store full baseline vector, not normalized
+        pieceDirections[pieceId] = baselineVector; // Store full baseline vector, not normalized
         maxRadius = Math.max(maxRadius, radius);
       } else {
-        pieceDirections[piece] = new THREE.Vector3(0, 0, 0); // No-move marker
-        console.log(`Piece ${piece}: marked as no-move (at pivot)`);
+        pieceDirections[pieceId] = new THREE.Vector3(0, 0, 0); // No-move marker
+        console.log(`Piece ${pieceId}: marked as no-move (at pivot)`);
       }
     });
 
@@ -362,7 +394,13 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
     }
 
     console.log('SolutionViewer3D: Processing solution with', solution.placements.length, 'placements');
-    const pieceCells: Record<string, Array<{ x: number; y: number; z: number }>> = {};
+    // Track individual placements instead of grouping by piece type
+    const individualPlacements: Array<{
+      id: string;
+      piece: string;
+      instanceIndex: number;
+      cells: Array<{ x: number; y: number; z: number }>;
+    }> = [];
     const allWorldCells: Array<{ x: number; y: number; z: number }> = [];
     
     const effectiveMaxPlacements = movieOverrides?.maxPlacements ?? maxPlacements;
@@ -370,13 +408,23 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
     const placementsToShow = solution.placements;
     console.log('SolutionViewer3D: Showing all', placementsToShow.length, 'placements, effectiveMaxPlacements=', effectiveMaxPlacements);
     
-    for (const placement of placementsToShow) {
+    // Count instances of each piece type
+    const pieceInstanceCounts: Record<string, number> = {};
+    
+    for (let placementIndex = 0; placementIndex < placementsToShow.length; placementIndex++) {
+      const placement = placementsToShow[placementIndex];
       const piece = placement.piece;
-      console.log('SolutionViewer3D: Processing piece', piece, placement);
       
-      if (!pieceCells[piece]) {
-        pieceCells[piece] = [];
+      // Track instance count for this piece type
+      if (!pieceInstanceCounts[piece]) {
+        pieceInstanceCounts[piece] = 0;
       }
+      const instanceIndex = pieceInstanceCounts[piece];
+      pieceInstanceCounts[piece]++;
+      
+      console.log('SolutionViewer3D: Processing piece', piece, 'instance', instanceIndex, placement);
+      
+      const placementCells: Array<{ x: number; y: number; z: number }> = [];
       
       // Extract coordinates from placement
       let coordinates: number[][] = [];
@@ -403,7 +451,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       }
       
       // Convert engine coordinates to world coordinates
-      console.log('SolutionViewer3D: Converting coordinates for piece', piece, ':', coordinates);
+      console.log('SolutionViewer3D: Converting coordinates for piece', piece, 'instance', instanceIndex, ':', coordinates);
       for (const coord of coordinates) {
         const [i, j, k] = coord;
         const worldCell = fccToWorld(i, j, k);
@@ -414,10 +462,18 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
             y: worldCell.y,
             z: worldCell.z
           };
-          pieceCells[piece].push(worldPos);
+          placementCells.push(worldPos);
           allWorldCells.push(worldPos);
         }
       }
+      
+      // Add this individual placement to our list
+      individualPlacements.push({
+        id: `${piece}_${instanceIndex}`,
+        piece,
+        instanceIndex,
+        cells: placementCells
+      });
     }
     
     // Helper function to find adjacent cells within the same piece
@@ -459,19 +515,21 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       return bonds;
     };
 
-    // Convert to unified piece groups with both spheres and bonds
-    console.log('SolutionViewer3D: Final piece cells:', pieceCells);
-    const unifiedGroups = Object.entries(pieceCells).map(([piece, cells]) => {
-      console.log('SolutionViewer3D: Creating unified group for piece', piece, 'with', cells.length, 'spheres');
+    // Convert to unified piece groups with both spheres and bonds - each placement is individual
+    console.log('SolutionViewer3D: Final individual placements:', individualPlacements);
+    const unifiedGroups = individualPlacements.map((placement) => {
+      const { id, piece, instanceIndex, cells } = placement;
+      console.log('SolutionViewer3D: Creating unified group for', id, 'with', cells.length, 'spheres');
       
       // Create sphere data
       const spherePositions = new Float32Array(cells.length * 3);
       const sphereColors = new Float32Array(cells.length * 3);
       
-      const hexColor = PIECE_COLORS[piece] || '#888888';
+      // Generate distinct color for this instance
+      const hexColor = generateInstanceColor(piece, instanceIndex);
       const color = new THREE.Color(hexColor);
       
-      console.log(`SolutionViewer3D: Piece ${piece} using color ${hexColor}, THREE.Color:`, color);
+      console.log(`SolutionViewer3D: Piece ${id} using color ${hexColor}, THREE.Color:`, color);
       
       cells.forEach((cell, i) => {
         spherePositions[i * 3] = cell.x;
@@ -514,7 +572,7 @@ export const SolutionViewer3D = forwardRef<SolutionViewer3DRef, SolutionViewer3D
       console.log(`SolutionViewer3D: Piece ${piece} RGB values:`, [color.r, color.g, color.b]);
       
       return {
-        piece,
+        piece: id, // Use unique ID instead of piece type
         spheres: {
           positions: spherePositions,
           colors: sphereColors,

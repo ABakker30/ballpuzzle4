@@ -1,538 +1,504 @@
-"""DLX Engine with piece combination iteration for exact cover solving."""
+"""DLX Engine with piece combination iteration for exact cover solving.
+Drop-in compatible with DFS engine event/status schemas.
+"""
 
 import time
+import random
 from typing import Iterator, Dict, List, Set, Any, Tuple, Optional
+
+from ..engine_api import EngineProtocol  # and the runtime expects solve(...) to yield events
 from ...pieces.library_fcc_v1 import load_fcc_A_to_Y
 from ...pieces.sphere_orientations import get_piece_orientations
 from ...coords.symmetry_fcc import canonical_atom_tuple
 from ...solver.heuristics import tie_shuffle
-from ...common.status_snapshot import Snapshot, StackItem, ContainerInfo, now_ms
+
+from ...common.status_snapshot import (
+    StatusV2, PlacedPiece, ContainerInfo, Metrics, now_ms, label_for_piece, expand_piece_to_cells
+)
 from ...common.status_emitter import StatusEmitter
-import random
-from ..engine_api import EngineProtocol
+
+from ...io.solution_sig import canonical_state_signature
+from ...solver.symbreak import container_symmetry_group
+
 from .coordinate_mapper import CoordinateMapper
 from .bitmap_state import BitmapState
 
 I3 = Tuple[int, int, int]
 
+
 class DLXEngine(EngineProtocol):
     name = "dlx"
-    
-    def solve(self, container: List[I3], inventory, pieces, options) -> Iterator[Dict[str, Any]]:
+
+    def solve(self, container, inventory, pieces, options) -> Iterator[Dict[str, Any]]:
         """Solve using Algorithm X with Dancing Links, iterating through piece combinations."""
-        
-        seed = options.get("seed", 42)
-        max_rows_cap = options.get("max_rows_cap")
-        time_limit = options.get("time_limit", 0)  # Standardized parameter name
-        max_results = options.get("max_results", float('inf'))  # Allow unlimited solutions by default
-        
-        # Status snapshot parameters
+        # -------------------------
+        # Options (aligned with DFS)
+        # -------------------------
+        seed = int(options.get("seed", 42))
+        max_rows_cap = options.get("max_rows_cap")  # optional global cap on candidate rows
+        time_limit = float(options.get("time_limit", 0))  # 0/<=0 = no limit
+        max_results = int(options.get("max_results", 1))
+
+        # Status options (use StatusV2 like DFS)
         status_json = options.get("status_json")
-        status_interval_ms = options.get("status_interval_ms", 1000)
-        status_max_stack = options.get("status_max_stack", 512)
+        status_interval_ms = int(options.get("status_interval_ms", 1000))
+        status_max_stack = int(options.get("status_max_stack", 512))
         status_phase = options.get("status_phase")
-        
-        # Generate run ID and start time
+
+        # -------------------------
+        # Run bookkeeping
+        # -------------------------
+        t0 = time.time()
         start_time_ms = now_ms()
         run_id = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
-        
-        # print(f"DLX DEBUG: Time limit parameter: {time_limit}")
-        
         rnd = random.Random(seed)
-        
-        def maybe_tick(**kwargs):
-            nonlocal last_tick_ms
-            import time
-            now_ms = int(time.time() * 1000)
-            if now_ms - last_tick_ms >= 100:
-                last_tick_ms = now_ms
-                # Check time limit during tick
-                if time_limit > 0 and (time.time() - start_time) >= time_limit:
-                    # print(f"DLX DEBUG: Time limit reached during tick after {time.time() - start_time:.1f} seconds")
-                    return
-                yield {"type": "tick", "data": kwargs}
-        
-        # Extract coordinates from container dict if needed
+
+        # Container normalization (compatible with DFS)
         if isinstance(container, dict) and "coordinates" in container:
-            container_coords = [tuple(coord) for coord in container["coordinates"]]
+            container_coords: List[I3] = [tuple(map(int, c)) for c in container["coordinates"]]
             container_cid = container.get("cid_sha256", f"container_{hash(str(container))}")
         elif isinstance(container, (list, tuple)):
-            container_coords = [tuple(coord) for coord in container]
+            container_coords = [tuple(map(int, c)) for c in container]
             container_cid = f"container_{hash(str(container_coords))}"
         else:
             container_coords = []
             container_cid = "container_empty"
-        
-        container_set = set(container_coords)
-        cells_sorted = sorted(container_coords)
-        
-        # Initialize shared state for status snapshots
+
+        container_cells = sorted(container_coords)
+        container_set = set(container_cells)
+        container_size = len(container_cells)
+        sym_group = container_symmetry_group(container_cells)
+
+        # Inventory normalization
+        inv: Dict[str, int] = inventory.get("pieces", {}) or inventory
+
+        # Shared metrics (aligned keys with DFS)
         solutions_found = 0
         nodes_explored = 0
-        current_partial_solution = []
-        current_combination_idx = 0
-        total_combinations = 0
-        
-        # Create piece name to index mapping for status snapshots
+        max_depth_reached = 0
+        max_pieces_placed = 0
+
+        # For StatusV2 snapshots (approximate view like DFS)
+        current_stack_rows: List[Dict[str, Any]] = []  # list of rows_meta entries for current partial solution
+
+        # Piece index mapping for snapshot labels
         pieces_dict = load_fcc_A_to_Y()
-        piece_names = sorted(pieces_dict.keys())
-        piece_name_to_idx = {name: idx for idx, name in enumerate(piece_names)}
-        
-        # Status snapshot builder function
-        def build_snapshot() -> Snapshot:
-            # Convert partial solution to StackItem format
-            stack_items = []
-            for row_data in current_partial_solution:
-                # Extract piece info from row data
-                piece_name = row_data.get('piece', 'A')
-                piece_idx = piece_name_to_idx.get(piece_name, 0)
-                orientation = row_data.get('ori', 0)
-                # Use first coordinate as anchor
-                coords = row_data.get('coords', [(0, 0, 0)])
-                anchor = coords[0] if coords else (0, 0, 0)
-                
-                stack_items.append(StackItem(
-                    piece=piece_idx,
-                    orient=orientation,
-                    i=int(anchor[0]),
-                    j=int(anchor[1]),
-                    k=int(anchor[2])
-                ))
-            
-            # Apply stack truncation if needed
-            truncated = False
-            if len(stack_items) > status_max_stack:
-                stack_items = stack_items[-status_max_stack:]  # keep tail
-                truncated = True
-            
-            elapsed = now_ms() - start_time_ms
-            
-            return Snapshot(
-                v=1,
-                ts_ms=now_ms(),
-                engine="dlx",
-                run_id=run_id,
-                container=ContainerInfo(cid=container_cid, cells=len(container_coords)),
-                k=current_combination_idx,  # DLX uses combination index as k
-                nodes=int(nodes_explored),
-                pruned=0,  # DLX doesn't track pruned separately
-                depth=int(len(current_partial_solution)),
-                best_depth=None,  # DLX doesn't track best depth
-                solutions=int(solutions_found),
-                elapsed_ms=int(elapsed),
-                stack=stack_items,
-                stack_truncated=truncated,
-                hash_container_cid=container_cid,
-                hash_solution_sid=None,
-                phase=status_phase
-            )
-        
-        # Initialize status emitter if requested
-        status_emitter = None
+        piece_names_sorted = sorted(pieces_dict.keys())
+        piece_name_to_idx = {name: idx for idx, name in enumerate(piece_names_sorted)}
+
+        # -------------------------
+        # Status emitter (StatusV2)
+        # -------------------------
+        def build_snapshot() -> StatusV2:
+            try:
+                placed: List[PlacedPiece] = []
+                instance_id = 1
+                for meta in current_stack_rows[-status_max_stack:]:
+                    # mirror DFS snapshot style: use piece_type label, expand from anchor
+                    piece_name = meta.get("piece", "A")
+                    piece_type = piece_name_to_idx.get(piece_name, 0)
+                    piece_label = label_for_piece(piece_type)
+                    covered = meta.get("covered") or []
+                    anchor = covered[0] if covered else (0, 0, 0)
+                    cells = expand_piece_to_cells(piece_type, anchor[0], anchor[1], anchor[2])
+                    placed.append(PlacedPiece(
+                        instance_id=instance_id,
+                        piece_type=piece_type,
+                        piece_label=piece_label,
+                        cells=cells
+                    ))
+                    instance_id += 1
+
+                elapsed = now_ms() - start_time_ms
+                metrics = Metrics(
+                    nodes=int(nodes_explored),
+                    pruned=0,
+                    depth=int(len(current_stack_rows)),
+                    solutions=int(solutions_found),
+                    elapsed_ms=int(elapsed),
+                    best_depth=int(max_depth_reached) if max_depth_reached > 0 else None
+                )
+                return StatusV2(
+                    version=2,
+                    ts_ms=now_ms(),
+                    engine="dlx",
+                    phase=status_phase or "search",
+                    run_id=run_id,
+                    container=ContainerInfo(cid=container_cid, cells=container_size),
+                    metrics=metrics,
+                    stack=placed,
+                    stack_truncated=len(current_stack_rows) > status_max_stack
+                )
+            except Exception:
+                # Fallback on error
+                return StatusV2(
+                    version=2,
+                    ts_ms=now_ms(),
+                    engine="dlx",
+                    phase=status_phase or "search",
+                    run_id=run_id,
+                    container=ContainerInfo(cid=container_cid, cells=container_size),
+                    metrics=Metrics(nodes=0, pruned=0, depth=0, solutions=int(solutions_found), elapsed_ms=int(now_ms() - start_time_ms)),
+                    stack=[],
+                    stack_truncated=False
+                )
+
+        status_emitter: Optional[StatusEmitter] = None
         if status_json:
-            status_emitter = StatusEmitter(status_json, status_interval_ms)
-            status_emitter.start(build_snapshot)
-        
-        # Initialize coordinate mapper for integer-based operations
-        mapper = CoordinateMapper()
-        
-        # Pre-map all container coordinates
-        container_coord_ids = mapper.map_coordinates(container_coords)
-        # print(f"DLX DEBUG: Mapped {len(container_coords)} container coordinates to integers")
-        
-        last_tick_ms = 0
-        results = 0
-        
-        # Track start time for time limit
-        start_time = time.time()
-        
-        # Build column IDs (mapped container coordinates)
-        cell_col_ids = container_coord_ids
-        cell_index: Dict[I3, int] = {c: i for i, c in enumerate(cells_sorted)}
-        
-        inv = inventory.get("pieces", {}) or inventory
-        container_size = len(cells_sorted)
-        
-        # Generate all valid piece combinations that sum to container size
-        def generate_piece_combinations(container_size: int, available_pieces: Dict[str, int]):
-            """Generate all piece combinations that sum to exactly container_size cells."""
-            pieces_needed = container_size // 4
-            if container_size % 4 != 0:
-                return []  # Container size must be divisible by 4
-            
-            # Optimization: If we have exactly the pieces we need (all inventory = 1 and pieces_needed = total pieces)
+            try:
+                status_emitter = StatusEmitter(status_json, status_interval_ms)
+                status_emitter.start(build_snapshot)
+            except Exception:
+                status_emitter = None  # fail-open
+
+        # -------------------------
+        # Helpers
+        # -------------------------
+        def time_up() -> bool:
+            return time_limit > 0 and (time.time() - t0) >= time_limit
+
+        # Generate all valid piece-combinations that sum to container size
+        def generate_piece_combinations(csize: int, available_pieces: Dict[str, int]) -> List[Dict[str, int]]:
+            pieces_needed = csize // 4
+            if csize % 4 != 0:
+                return []
+
             total_available = sum(available_pieces.values())
             all_ones = all(count == 1 for count in available_pieces.values())
-            
+
+            # If inventory matches exact count and all are 1, use everything once
             if pieces_needed == total_available and all_ones:
-                # Use all pieces exactly once - no enumeration needed
                 return [available_pieces.copy()]
-            
-            # For other cases, use the full enumeration
+
             from itertools import combinations_with_replacement
-            
-            # Get available piece types and their counts
-            piece_types = list(available_pieces.keys())
-            combinations = []
-            
-            # Generate all combinations of pieces that sum to pieces_needed
-            for combo in combinations_with_replacement(piece_types, pieces_needed):
-                piece_count = {}
-                for piece in combo:
-                    piece_count[piece] = piece_count.get(piece, 0) + 1
-                
-                # Check if this combination is valid (within inventory limits)
+            types = list(available_pieces.keys())
+            combos: List[Dict[str, int]] = []
+            for combo in combinations_with_replacement(types, pieces_needed):
+                pc: Dict[str, int] = {}
+                for p in combo:
+                    pc[p] = pc.get(p, 0) + 1
+                # within available limits?
                 valid = True
-                for piece, count in piece_count.items():
-                    if count > available_pieces.get(piece, 0):
+                for p, cnt in pc.items():
+                    if cnt > available_pieces.get(p, 0):
                         valid = False
                         break
-                
                 if valid:
-                    combinations.append(piece_count)
-            
-            return combinations
-        
+                    combos.append(pc)
+            return combos
+
         valid_combinations = generate_piece_combinations(container_size, inv)
-        print(f"DLX DEBUG: Container size: {len(container_coords)}, Inventory: {inv}")
-        print(f"DLX DEBUG: Found {len(valid_combinations)} valid piece combinations")
-        
-        # Focus on known working combinations that have multiple solutions
+
+        # Optional prioritization like your prior code
         working_combos = [
-            {'A': 2, 'E': 1, 'T': 1},  # Known working
-            {'A': 2, 'E': 1, 'Y': 1},  # Alternative found
-            {'A': 1, 'E': 1, 'T': 2},  # Variation
-            {'E': 2, 'T': 2},          # Different combination
+            {'A': 2, 'E': 1, 'T': 1},
+            {'A': 2, 'E': 1, 'Y': 1},
+            {'A': 1, 'E': 1, 'T': 2},
+            {'E': 2, 'T': 2},
         ]
-        
-        # Prioritize working combinations
         prioritized = []
-        for combo in working_combos:
-            if combo in valid_combinations:
-                valid_combinations.remove(combo)
-                prioritized.append(combo)
-        
+        for wc in working_combos:
+            if wc in valid_combinations:
+                valid_combinations.remove(wc)
+                prioritized.append(wc)
         valid_combinations = prioritized + valid_combinations
-        print(f"DLX DEBUG: Prioritizing {len(prioritized)} known working combinations")
-        
-        # Use all combinations for finding multiple solutions
-        # print(f"DLX DEBUG: Generated {len(valid_combinations)} valid piece combinations")
+
         if not valid_combinations:
-            # print("DLX DEBUG: No valid piece combinations found!")
+            if status_emitter:
+                status_emitter.stop()
+            yield {
+                "type": "done",
+                "metrics": {
+                    "solutions_found": 0,
+                    "nodes_explored": 0,
+                    "time_elapsed": time.time() - t0,
+                    "max_depth_reached": 0,
+                    "max_pieces_placed": 0
+                }
+            }
             return
-        
-        # Update total combinations for status snapshots
-        total_combinations = len(valid_combinations)
-        
-        # Try each combination until solution found or time limit reached
+
+        # Coordinate mapper for row/column integer ids
+        mapper = CoordinateMapper()
+        container_coord_ids = mapper.map_coordinates(container_cells)  # expected 0..N-1 mapping
+
+        # -------------------------
+        # Main combination loop
+        # -------------------------
         for combo_idx, target_inventory in enumerate(valid_combinations):
-            # Update current combination index for status snapshots
-            current_combination_idx = combo_idx
-            
-            target_pieces = list(target_inventory.keys())
-            # print(f"DLX DEBUG: Testing combination {combo_idx+1}/{len(valid_combinations)}: {target_inventory}")
-            # print(f"DLX DEBUG: Starting candidate generation at {time.time() - start_time:.2f}s")
-            
-            # Generate candidates for this combination
-            # Build rows (piece placements) and their column sets
+            if time_up() or solutions_found >= max_results:
+                break
+
+            # -------------------------
+            # Candidate generation (bounded)
+            # -------------------------
             rows_cols: Dict[int, Set[int]] = {}
             rows_meta: Dict[int, Dict[str, Any]] = {}
             seen_canon: Set[Tuple[str, Tuple[I3, ...]]] = set()
-            best_per_cellset: Dict[frozenset, Tuple[Tuple[int, int, int], str]] = {}
-            
-            # Candidate budget and prioritization strategy
-            CANDIDATE_BUDGET = 5000  # Maximum candidates per combination
-            candidates_generated = 0
-            
-            # Sort pieces by constraint level (fewer orientations = higher priority)
-            piece_priorities = []
-            for pid in target_pieces:
+            best_per_cellset: Dict[frozenset, int] = {}  # cellset -> row_id
+
+            # Budget
+            CANDIDATE_BUDGET = 5000
+            if max_rows_cap:
                 try:
-                    orientations = get_piece_orientations(pid)
-                    orientation_count = len([o for o in orientations if o])
-                    piece_priorities.append((orientation_count, pid))  # Sort by orientation count (ascending)
-                except KeyError:
-                    piece_priorities.append((1, pid))
-            
-            piece_priorities.sort()  # Most constrained pieces first
-            prioritized_pieces = [pid for _, pid in piece_priorities]
-            
-            # Pre-calculate container boundaries for efficient position prioritization
-            x_coords = [c[0] for c in container_coords]
-            y_coords = [c[1] for c in container_coords]
-            z_coords = [c[2] for c in container_coords]
-            x_min, x_max = min(x_coords), max(x_coords)
-            y_min, y_max = min(y_coords), max(y_coords)
-            z_min, z_max = min(z_coords), max(z_coords)
-            
-            # Sort container positions by constraint level (corners first, then edges, then center)
-            def position_priority(coord):
+                    CANDIDATE_BUDGET = min(CANDIDATE_BUDGET, int(max_rows_cap))
+                except Exception:
+                    pass
+            candidates_generated = 0
+            early_exit = False
+
+            # Piece prioritization: fewest orientations first
+            priorities = []
+            for pid in target_inventory.keys():
+                try:
+                    oris = get_piece_orientations(pid)
+                    oc = len([o for o in oris if o])
+                except Exception:
+                    oc = 1
+                priorities.append((oc, pid))
+            priorities.sort()
+            prioritized_pieces = [pid for _, pid in priorities]
+
+            # Position priority: corners/edges first (simple boundary count)
+            xs = [c[0] for c in container_cells]
+            ys = [c[1] for c in container_cells]
+            zs = [c[2] for c in container_cells]
+            x_min, x_max = min(xs), max(xs)
+            y_min, y_max = min(ys), max(ys)
+            z_min, z_max = min(zs), max(zs)
+
+            def pos_priority(coord: I3) -> int:
                 x, y, z = coord
-                # Count how many coordinates are at container boundaries
-                boundary_count = 0
-                if x == x_min or x == x_max:
-                    boundary_count += 1
-                if y == y_min or y == y_max:
-                    boundary_count += 1
-                if z == z_min or z == z_max:
-                    boundary_count += 1
-                return -boundary_count  # Negative for descending sort (corners first)
-            
-            prioritized_positions = sorted(container_coords, key=position_priority)
-            
-            # print(f"DLX DEBUG: Prioritized pieces: {piece_priorities}")
-            # print(f"DLX DEBUG: Candidate budget: {CANDIDATE_BUDGET}")
-            # print(f"DLX DEBUG: Position sorting complete at {time.time() - start_time:.2f}s")
-            
-            # Generate candidates with budget and prioritization
+                boundary = 0
+                if x in (x_min, x_max):
+                    boundary += 1
+                if y in (y_min, y_max):
+                    boundary += 1
+                if z in (z_min, z_max):
+                    boundary += 1
+                return -boundary  # corners (3) first
+
+            prioritized_positions = sorted(container_cells, key=pos_priority)
+
+            # Build candidate rows
             for pid in prioritized_pieces:
-                # print(f"DLX DEBUG: Processing piece {pid} at {time.time() - start_time:.2f}s")
-                if candidates_generated >= CANDIDATE_BUDGET:
-                    print(f"DLX DEBUG: Candidate budget reached ({CANDIDATE_BUDGET}), stopping generation")
+                if early_exit or time_up() or candidates_generated >= CANDIDATE_BUDGET:
                     break
-                    
                 if target_inventory.get(pid, 0) <= 0:
                     continue
-                
+
                 try:
                     orientations = get_piece_orientations(pid)
                 except KeyError:
                     orientations = [[[0, 0, 0]]]
-                
-                piece_candidates_start = candidates_generated
-                
+
                 for oi, orient in enumerate(orientations):
-                    if candidates_generated >= CANDIDATE_BUDGET:
+                    if early_exit or time_up() or candidates_generated >= CANDIDATE_BUDGET:
                         break
                     if not orient:
                         continue
-                    anchor = orient[0]
-                    
+                    anchor = tuple(map(int, orient[0]))
+
                     for c in prioritized_positions:
-                        if candidates_generated >= CANDIDATE_BUDGET:
+                        if early_exit or time_up() or candidates_generated >= CANDIDATE_BUDGET:
                             break
-                            
-                        # Ensure coordinates are integers
-                        c_int = (int(c[0]), int(c[1]), int(c[2]))
-                        anchor_int = (int(anchor[0]), int(anchor[1]), int(anchor[2]))
-                        dx, dy, dz = c_int[0] - anchor_int[0], c_int[1] - anchor_int[1], c_int[2] - anchor_int[2]
+
+                        dx, dy, dz = c[0] - anchor[0], c[1] - anchor[1], c[2] - anchor[2]
                         cov = tuple(sorted((u[0] + dx, u[1] + dy, u[2] + dz) for u in orient))
-                        
                         if any(cc not in container_set for cc in cov):
                             continue
-                        
-                        canon = canonical_atom_tuple(cov)
+
+                        canon = canonical_atom_tuple(cov)  # dedup same footprint per piece/orientation
                         key = (pid, canon)
                         if key in seen_canon:
                             continue
                         seen_canon.add(key)
-                        
-                        # Map coordinates to integer IDs
+
+                        # Map coordinates to integer ids
                         try:
                             coord_ids = mapper.map_coordinates(list(cov))
                             cellset = frozenset(coord_ids)
                         except KeyError:
                             continue
-                        
-                        # Create row using mapper
+
                         row_key = f"{pid}|o{oi}|t{dx},{dy},{dz}"
                         row_id = mapper.map_row(row_key, pid, oi, (dx, dy, dz), list(cov))
-                        best_per_cellset[cellset] = ((0, 0, 0), row_id)
-                        
+
+                        best_per_cellset[cellset] = row_id  # keep last (simple policy)
                         candidates_generated += 1
-                        if max_rows_cap and candidates_generated >= max_rows_cap:
+                        if max_rows_cap and candidates_generated >= int(max_rows_cap):
+                            early_exit = True
                             break
-                
-                piece_candidates = candidates_generated - piece_candidates_start
-                # print(f"DLX DEBUG: Generated {piece_candidates} candidates for piece {pid}")
-                
-                # Check time limit during candidate generation
-                if time_limit > 0:
-                    elapsed = time.time() - start_time
-                    remaining = time_limit - elapsed
-                    # print(f"DLX DEBUG: Time budget: {time_limit}s, elapsed: {elapsed:.1f}s, remaining: {remaining:.1f}s")
-                    if elapsed >= time_limit:
-                        # print(f"DLX DEBUG: Time limit reached during candidate generation after {elapsed:.1f} seconds")
-                        return
-            
-            rowsBuilt = candidates_generated
-            
-            # Finalize rows for this combination
-            piece_candidate_counts = {}
-            for cellset, (_score, row_id) in best_per_cellset.items():
-                # Get placement info from mapper
-                placement_info = mapper.get_placement_info(row_id)
-                pid = placement_info["piece_id"]
-                oi = placement_info["orientation_idx"]
-                position = placement_info["position"]
-                covered_cells = placement_info["coordinates"]
-                
-                meta = {"piece": pid, "ori": oi, "t": position, "covered": covered_cells}
-                
-                rows_cols[row_id] = cellset
-                rows_meta[row_id] = meta
-                piece_candidate_counts[pid] = piece_candidate_counts.get(pid, 0) + 1
-            
-            # print(f"DLX DEBUG: Candidate generation complete at {time.time() - start_time:.2f}s")
-            # print(f"DLX DEBUG: Generated {len(rows_cols)} candidates for combination")
-            # for pid in sorted(piece_candidate_counts.keys()):
-            #     print(f"DLX DEBUG: Piece {pid}: {piece_candidate_counts[pid]} candidates")
-            
-            if not rows_cols:
-                # print("DLX DEBUG: No candidates for this combination, trying next")
+
+            if time_up():
+                break
+
+            if not best_per_cellset:
+                # No placements for this combo; move on
                 continue
-            
-            # Algorithm X setup with bitmap optimization
-            num_columns = len(cell_col_ids)
+
+            # Finalize rows/cols
+            for cellset, rid in best_per_cellset.items():
+                rows_cols[rid] = cellset
+                placement_info = mapper.get_placement_info(rid)
+                rows_meta[rid] = {
+                    "piece": placement_info["piece_id"],
+                    "ori": placement_info["orientation_idx"],
+                    "t": placement_info["position"],
+                    "covered": [tuple(map(int, c)) for c in placement_info["coordinates"]],
+                }
+
+            # -------------------------
+            # Build bitmap state for Algorithm X
+            # -------------------------
+            num_columns = len(container_cells)
             num_rows = len(rows_cols)
-            
-            # Create bitmap state for efficient operations
+
             bitmap_state = BitmapState(num_columns, num_rows)
-            
-            # Map row IDs to sequential indices for bitmap
+
+            # stable index mapping for rows
             row_id_to_index = {rid: idx for idx, rid in enumerate(rows_cols.keys())}
             index_to_row_id = {idx: rid for rid, idx in row_id_to_index.items()}
-            
-            # Set up row-column relationships in bitmap
+
             for rid, colset in rows_cols.items():
                 row_idx = row_id_to_index[rid]
-                col_indices = [cid for cid in colset if cid < num_columns]
+                col_indices = [cid for cid in colset if 0 <= cid < num_columns]
                 bitmap_state.set_row_columns(row_idx, col_indices)
-            
+
             solution_rows: List[int] = []
-            piece_usage: Dict[str, int] = {pid: 0 for pid in target_pieces}
-            
-            # Bitmap-based cover/uncover operations
-            cover_stack: List[Tuple[int, int]] = []  # Stack of (removed_cols, removed_rows) bitmaps
-            
-            # Core Algorithm X search with bitmap optimization
+            piece_usage: Dict[str, int] = {p: 0 for p in target_inventory.keys()}
+            cover_stack: List[Tuple[int, int]] = []  # (removed_cols_bitmap, removed_rows_bitmap)
+
+            # -------------------------
+            # DLX recursive search
+            # -------------------------
             def search() -> Iterator[List[int]]:
-                nonlocal results, nodes_explored, current_partial_solution
-                
-                # Update nodes explored and current partial solution for status snapshots
+                nonlocal nodes_explored, max_depth_reached, max_pieces_placed, current_stack_rows
+
+                # update status bookkeeping
                 nodes_explored += 1
-                current_partial_solution = []
-                for row_id in solution_rows:
+                max_depth_reached = max(max_depth_reached, len(solution_rows))
+                max_pieces_placed = max(max_pieces_placed, len(solution_rows))
+
+                # refresh snapshot stack (like DFS)
+                current_stack_rows = []
+                for row_id in solution_rows[-status_max_stack:]:
                     if row_id in rows_meta:
-                        current_partial_solution.append(rows_meta[row_id])
-                
-                # Time check during recursive search
-                if time_limit > 0 and (time.time() - start_time) >= time_limit:
+                        current_stack_rows.append(rows_meta[row_id])
+
+                # time check
+                if time_up():
                     return
-                
+
                 if bitmap_state.is_solved():
-                    # print(f"DLX DEBUG: Found solution with {len(solution_rows)} pieces")
                     yield list(solution_rows)
-                    return  # Continue searching for more solutions
-                
-                # Check for empty columns (unsolvable state)
+                    return
+
                 if bitmap_state.has_empty_column():
                     return
-                
-                # Choose column with minimum candidates (MRV heuristic)
+
+                # MRV column (bitmap_state chooses col with min candidates)
                 col, candidate_count = bitmap_state.choose_best_column()
                 if col == -1 or candidate_count == 0:
                     return
-                
-                # Get candidates for this column
+
                 candidate_indices = bitmap_state.get_column_candidates(col)
                 candidate_row_ids = [index_to_row_id[idx] for idx in candidate_indices]
-                candidate_row_ids = tie_shuffle(candidate_row_ids, rnd.randint(0, 2**31-1))
-                
+                candidate_row_ids = tie_shuffle(candidate_row_ids, rnd.randint(0, 2**31 - 1))
+
                 for row_id in candidate_row_ids:
                     piece_id = rows_meta[row_id]["piece"]
                     if piece_usage[piece_id] >= target_inventory.get(piece_id, 0):
                         continue
-                    
+
                     solution_rows.append(row_id)
                     piece_usage[piece_id] += 1
-                    
-                    # Cover the row using bitmap operations
+
                     row_idx = row_id_to_index[row_id]
                     removed_cols, removed_rows = bitmap_state.cover_row(row_idx)
                     cover_stack.append((removed_cols, removed_rows))
-                    
+
                     for sol in search():
-                        if isinstance(sol, dict) and sol.get("type") == "tick":
-                            yield sol
-                        else:
-                            yield sol
-                    
-                    # Uncover using bitmap operations
+                        yield sol
+                        if time_up():
+                            break
+
+                    # backtrack
                     removed_cols, removed_rows = cover_stack.pop()
                     bitmap_state.uncover(removed_cols, removed_rows)
                     piece_usage[piece_id] -= 1
                     solution_rows.pop()
-            
-            # Try Algorithm X search for this combination
-            canonical_sigs = set()
-            combination_found_solution = False
-            
-            # print(f"DLX DEBUG: Starting Algorithm X search with {num_columns} columns, {num_rows} rows")
-            
+
+                    if time_up():
+                        return
+
+            # -------------------------
+            # Enumerate solutions for this combination
+            # -------------------------
             for sol_rows in search():
-                if isinstance(sol_rows, dict) and sol_rows.get("type") == "tick":
-                    yield sol_rows
-                    continue
-                
-                # Build placements from solution
+                if time_up():
+                    break
+
+                # Build DFS-compatible solution event
                 placements = []
-                pieces_used = {}
-                
+                pieces_used: Dict[str, int] = {}
+                all_coords: List[I3] = []
+
                 for row_id in sol_rows:
                     meta = rows_meta[row_id]
                     piece_id = meta["piece"]
+                    ori_idx = meta["ori"]
+                    tvec = meta["t"]
+                    covered = meta["covered"]
+
                     pieces_used[piece_id] = pieces_used.get(piece_id, 0) + 1
-                    
                     placements.append({
                         "piece": piece_id,
-                        "orientation": meta["ori"],
-                        "position": list(meta["t"]),
-                        "coordinates": [list(coord) for coord in meta["covered"]]
+                        "ori": int(ori_idx),
+                        "t": list(map(int, tvec)),
+                        "cells_ijk": [list(map(int, c)) for c in covered]
                     })
-                
-                # Canonical deduplication - use simple hash of placement coordinates
-                from ...coords.canonical import cid_sha256
-                all_coords = []
-                for placement in placements:
-                    all_coords.extend([tuple(coord) for coord in placement["coordinates"]])
-                sig = cid_sha256(all_coords)
-                
-                if sig in canonical_sigs:
-                    continue
-                canonical_sigs.add(sig)
-                
-                # Increment solutions found for status snapshots
-                solutions_found += 1
-                
-                # DEBUG: Emitting solution with {len(placements)} placements
+                    all_coords.extend(covered)
+
+                sid = canonical_state_signature(all_coords, sym_group)
+
                 yield {
                     "type": "solution",
+                    "t_ms": int((time.time() - t0) * 1000),
                     "solution": {
-                        "placements": placements,
+                        "containerCidSha256": container_cid,
+                        "lattice": "fcc",
                         "piecesUsed": pieces_used,
-                        "canonical_signature": sig
+                        "placements": placements,
+                        "sid_state_sha256": "dlx_state",
+                        "sid_route_sha256": "dlx_route",
+                        "sid_state_canon_sha256": sid
                     }
                 }
-                
-                combination_found_solution = True
-                # Don't break here - continue searching for more solutions within this combination
-            
-            # Continue searching through all combinations until time limit reached
-            # Don't break early - let time limit control termination
-        
-        # Stop status emitter if running
+
+                solutions_found += 1
+                if solutions_found >= max_results:
+                    break
+
+            if time_up() or solutions_found >= max_results:
+                break
+
+        # -------------------------
+        # Finalize
+        # -------------------------
         if status_emitter:
-            status_emitter.stop()
-        
-        # Emit done event
+            try:
+                status_emitter.stop()
+            except Exception:
+                pass
+
         yield {
             "type": "done",
             "metrics": {
-                "nodes": nodes_explored,
-                "pruned": 0,
-                "depth": len(current_partial_solution),
-                "bestDepth": 0,
-                "solutions": solutions_found
+                "solutions_found": solutions_found,
+                "nodes_explored": nodes_explored,
+                "time_elapsed": time.time() - t0,
+                "max_depth_reached": max_depth_reached,
+                "max_pieces_placed": max_pieces_placed
             }
         }
