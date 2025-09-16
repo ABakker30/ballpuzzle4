@@ -6,7 +6,7 @@ import RunForm from "./components/RunForm";
 import ViewPage from "./pages/ViewPage";
 import { ViewSolutionPage } from "./pages/ViewSolutionPage";
 import { PuzzleShapePage } from "./pages/PuzzleShapePage";
-import { PuzzlePage } from "./pages/PuzzlePage";
+import PuzzlePage from "./pages/PuzzlePage";
 import { useAppStore } from "./store";
 import "./styles/theme.css";
 import "./styles.css";

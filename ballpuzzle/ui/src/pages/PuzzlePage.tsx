@@ -10,6 +10,7 @@ import CompletionModal from "../components/CompletionModal";
 import ProgressIndicator from "../components/ProgressIndicator";
 import { computeConvexHull, calculateOrientationMatrix, orientPoints } from '../utils/convexHull';
 import { PieceHoverPreview } from "../components/PieceHoverPreview";
+import { PiecePreview } from "../components/PiecePreview";
 
 // Generate distinct color for each piece (same function as in PiecePreview)
 function getPieceColor(piece: string): string {
@@ -32,8 +33,20 @@ interface InventoryPanelProps {
 }
 
 function InventoryPanel({ pieces, pieceData, onPieceSelect, selectedPiece }: InventoryPanelProps) {
+  console.log('InventoryPanel render:', { pieces: pieces.length, pieceData: pieceData ? Object.keys(pieceData).length : 0 });
+  
   if (!pieceData) {
-    return <div>Loading pieces...</div>;
+    return <div style={{ padding: "16px", backgroundColor: "var(--bg-secondary)", borderRadius: "8px" }}>
+      <h3>Piece Inventory</h3>
+      <p>Loading pieces...</p>
+    </div>;
+  }
+
+  if (pieces.length === 0) {
+    return <div style={{ padding: "16px", backgroundColor: "var(--bg-secondary)", borderRadius: "8px" }}>
+      <h3>Piece Inventory</h3>
+      <p>No pieces available</p>
+    </div>;
   }
 
   const handlePieceClick = (piece: string, coordinates: number[][]) => {
@@ -165,6 +178,13 @@ export function PuzzlePage() {
     loadPieces();
   }, [setPuzzlePieces]);
 
+  // Update pieces array when puzzlePieces changes
+  React.useEffect(() => {
+    if (puzzlePieces) {
+      setPieces(Object.keys(puzzlePieces));
+    }
+  }, [puzzlePieces]);
+
   // Load and convert container when containerObj changes
   React.useEffect(() => {
     if (puzzleContainer && (puzzleContainer.coordinates || puzzleContainer.cells)) {
@@ -261,12 +281,13 @@ export function PuzzlePage() {
           containerPoints={orientedPoints.length > 0 ? orientedPoints : containerPoints}
           placedPieces={placedPieces}
           onCellClick={handleCellClick}
+          onSolutionComplete={handleSolutionComplete}
           hullFaces={puzzleOrientation?.faces}
         />
       </div>
       
       {/* Sidebar */}
-      <div style={{ width: "300px", padding: "16px", borderLeft: "1px solid var(--border)" }}>
+      <div style={{ width: "350px", padding: "16px", borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "16px", overflowY: "auto" }}>
         <div className="card">
           <h3>Interactive Puzzle</h3>
           <p>
@@ -301,29 +322,18 @@ export function PuzzlePage() {
           onPieceSelect={handlePieceSelect}
           selectedPiece={selectedPiece}
         />
-        <div className="flex-1 flex flex-col">
-          <div className="mb-4 flex justify-between items-start">
-            <div className="flex flex-col gap-4">
-              <UndoRedoControls />
-              <ProgressIndicator 
-                containerPoints={containerPoints}
-                placedPieces={placedPieces}
-              />
-              <SaveLoadPanel 
-                containerPoints={containerPoints}
-                sessionStats={sessionStats}
-              />
-              <SessionStatsPanel />
-            </div>
-          </div>
-          
-          <PuzzleViewer3D
+        
+        <div className="flex flex-col gap-4">
+          <UndoRedoControls />
+          <ProgressIndicator 
             containerPoints={containerPoints}
             placedPieces={placedPieces}
-            onCellClick={handleCellClick}
-            onSolutionComplete={handleSolutionComplete}
-            hullFaces={puzzleOrientation?.faces}
           />
+          <SaveLoadPanel 
+            containerPoints={containerPoints}
+            sessionStats={sessionStats}
+          />
+          <SessionStatsPanel />
         </div>
       </div>
       
@@ -335,3 +345,6 @@ export function PuzzlePage() {
       />
     </div>
   );
+}
+
+export default PuzzlePage;

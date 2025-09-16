@@ -617,6 +617,26 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       }
     };
 
+    const handleMouseUp = (event: MouseEvent) => {
+      if (event.button !== 0) return; // Only left mouse button
+      
+      if (dragState.isDragging) {
+        // Record drag end for session stats
+        if (selectedPiece) {
+          recordDragEnd(selectedPiece);
+        }
+        
+        // End dragging
+        setDragState({
+          isDragging: false,
+          dragStart: new THREE.Vector2(),
+          dragPlane: new THREE.Plane(),
+          dragOffset: new THREE.Vector3()
+        });
+        controls.enabled = true;
+      }
+    };
+
     const handleContextMenu = (event: MouseEvent) => {
       event.preventDefault();
     };
