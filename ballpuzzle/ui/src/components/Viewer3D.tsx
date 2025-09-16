@@ -2,7 +2,19 @@ import React, { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { useAppStore } from "../store";
-import { toWorld, computeCenter } from "../libs/fcc";
+import { fccToWorld } from "../lib/fcc";
+
+// Compute center using correct FCC conversion
+function computeCenter(cells: [number,number,number][], scale = 0.5) {
+  if (!cells.length) return { x: 0, y: 0, z: 0 };
+  let sx = 0, sy = 0, sz = 0;
+  for (const [x,y,z] of cells) {
+    const w = fccToWorld(x, y, z, scale);
+    sx += w.x; sy += w.y; sz += w.z;
+  }
+  const n = cells.length;
+  return { x: sx / n, y: sy / n, z: sz / n };
+}
 
 type Placement = { piece: string; ori: number; t: [number,number,number] };
 
@@ -130,7 +142,7 @@ export const Viewer3D: React.FC = () => {
     let i = 0;
     const m = new THREE.Matrix4();
     for (const [x,y,z] of containerCells) {
-      const w = toWorld(x,y,z,SCALE);
+      const w = fccToWorld(x, y, z, SCALE);
       m.setPosition(w.x - center.x, w.y - center.y, w.z - center.z);
       contInst.setMatrixAt(i++, m);
     }
@@ -142,7 +154,7 @@ export const Viewer3D: React.FC = () => {
     const ancInst = new THREE.InstancedMesh(ancGeom, new THREE.MeshStandardMaterial({ color: 0xffffff }), placementAnchors.length);
     i = 0;
     for (const a of placementAnchors) {
-      const w = toWorld(a.pos[0], a.pos[1], a.pos[2], SCALE);
+      const w = fccToWorld(a.pos[0], a.pos[1], a.pos[2], SCALE);
       m.setPosition(w.x - center.x, w.y - center.y, w.z - center.z);
       ancInst.setMatrixAt(i, m);
       ancInst.setColorAt(i, a.color);

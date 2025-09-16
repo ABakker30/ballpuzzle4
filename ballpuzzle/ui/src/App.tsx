@@ -6,11 +6,12 @@ import RunForm from "./components/RunForm";
 import ViewPage from "./pages/ViewPage";
 import { ViewSolutionPage } from "./pages/ViewSolutionPage";
 import { PuzzleShapePage } from "./pages/PuzzleShapePage";
+import { PuzzlePage } from "./pages/PuzzlePage";
 import { useAppStore } from "./store";
 import "./styles/theme.css";
 import "./styles.css";
 
-function TabButton({ id, label }: { id: "shape" | "solve" | "view" | "status"; label: string }) {
+function TabButton({ id, label }: { id: "shape" | "solve" | "view" | "status" | "puzzle"; label: string }) {
   const tab = useAppStore(s => s.tab);
   const setTab = useAppStore(s => s.setTab);
   const active = tab === id;
@@ -64,6 +65,7 @@ export default function App() {
           <TabButton id="shape" label="Puzzle Shape" />
           <TabButton id="solve" label="Solve Puzzle" />
           <TabButton id="view" label="View Solution" />
+          <TabButton id="puzzle" label="Puzzle" />
           <TabButton id="status" label="Status (Live)" />
         </div>
         <button 
@@ -85,6 +87,8 @@ export default function App() {
         {tab === "solve" && <RunForm />}
 
         {tab === "view" && <ViewSolutionPage />}
+
+        {tab === "puzzle" && <PuzzlePage />}
 
         {tab === "status" && <StatusPanel />}
       </main>

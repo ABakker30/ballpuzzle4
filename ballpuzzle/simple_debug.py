@@ -43,10 +43,15 @@ def is_fcc_connected_4(cells):
 import json
 import os
 
-pieces_file = os.path.join("src", "pieces", "data", "pieces_fcc_AtoY.json")
-if os.path.exists(pieces_file):
-    with open(pieces_file, 'r') as f:
-        base_pieces = json.load(f)
+# Load from authoritative source
+from src.pieces.library_fcc_v1 import load_fcc_A_to_Y
+
+pieces_lib = load_fcc_A_to_Y()
+base_pieces = {}
+for name, piece_def in pieces_lib.items():
+    if piece_def.orientations:
+        # Use first orientation for debugging
+        base_pieces[name] = [list(coord) for coord in piece_def.orientations[0]]
     
     print("=== Base piece definitions ===")
     for name, coords in base_pieces.items():

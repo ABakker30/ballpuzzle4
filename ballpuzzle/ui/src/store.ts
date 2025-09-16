@@ -3,7 +3,7 @@ import { create } from "zustand";
 type Status = { ok: boolean | null; message: string };
 
 type State = {
-  tab: "shape" | "solve" | "view" | "status";
+  tab: "shape" | "solve" | "view" | "status" | "puzzle";
   setTab: (t: State["tab"]) => void;
 
   containerStatus: Status;
@@ -25,6 +25,19 @@ type State = {
   // selected placement index
   selectedPlacementIdx: number | null;
   setSelectedPlacementIdx: (i: number | null) => void;
+
+  // puzzle state
+  puzzleContainer: any | null;
+  puzzlePieces: { [key: string]: any } | null;
+  placedPieces: Array<{ piece: string; position: any; rotation: any; id: string }>;
+  selectedPiece: string | null;
+  
+  setPuzzleContainer: (container: any | null) => void;
+  setPuzzlePieces: (pieces: { [key: string]: any } | null) => void;
+  setPlacedPieces: (pieces: Array<{ piece: string; position: any; rotation: any; id: string }>) => void;
+  setSelectedPiece: (piece: string | null) => void;
+  addPlacedPiece: (piece: { piece: string; position: any; rotation: any; id: string }) => void;
+  removePlacedPiece: (id: string) => void;
 };
 
 export const useAppStore = create<State>((set) => ({
@@ -48,4 +61,20 @@ export const useAppStore = create<State>((set) => ({
 
   selectedPlacementIdx: null,
   setSelectedPlacementIdx: (i) => set({ selectedPlacementIdx: i }),
+
+  puzzleContainer: null,
+  puzzlePieces: null,
+  placedPieces: [],
+  selectedPiece: null,
+  
+  setPuzzleContainer: (container) => set({ puzzleContainer: container }),
+  setPuzzlePieces: (pieces) => set({ puzzlePieces: pieces }),
+  setPlacedPieces: (pieces) => set({ placedPieces: pieces }),
+  setSelectedPiece: (piece) => set({ selectedPiece: piece }),
+  addPlacedPiece: (piece) => set((state) => ({ 
+    placedPieces: [...state.placedPieces, piece] 
+  })),
+  removePlacedPiece: (id) => set((state) => ({ 
+    placedPieces: state.placedPieces.filter(p => p.id !== id) 
+  })),
 }));

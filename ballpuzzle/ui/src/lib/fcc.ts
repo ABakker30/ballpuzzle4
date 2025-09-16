@@ -1,6 +1,23 @@
 /**
- * FCC (Face-Centered Cubic) coordinate system utilities
- * Converts integer FCC coordinates to world space positions
+ * === FCC Lattice Conversion ===
+ *
+ * Engine (rhombohedral FCC indices) -> World (x,y,z):
+ *   x = (j + k)/2 * a
+ *   y = (i + k)/2 * a
+ *   z = (i + j)/2 * a
+ *
+ * World (x,y,z) -> Engine (i,j,k):
+ *   i = (y + z - x) / a
+ *   j = (x + z - y) / a
+ *   k = (x + y - z) / a
+ *
+ * Notes:
+ * - 'a' is the lattice spacing (ball radius scale).
+ * - Always round i,j,k to nearest integer after inverse, with small epsilon.
+ * - Rotation snapping: check that inverse-mapped coords are integers.
+ * - Keep scale 'a' consistent across viewer, snapping, and solution save.
+ * - Convex hull orientation is applied in world space, but placements are
+ *   saved back in engine (ijk) so solutions remain canonical.
  */
 
 export interface Vector3 {
@@ -18,13 +35,46 @@ export interface Vector3 {
  * @returns World space position as Vector3
  */
 export function fccToWorld(i: number, j: number, k: number, a: number = 1): Vector3 {
-  // FCC basis vectors: b1=(0,1,1), b2=(1,0,1), b3=(1,1,0)
-  // world = (i*b1 + j*b2 + k*b3)/2 * a
   const x = (j + k) / 2 * a;
   const y = (i + k) / 2 * a;
   const z = (i + j) / 2 * a;
   
   return { x, y, z };
+}
+
+/**
+ * Convert world space position to FCC lattice coordinates
+ * @param x - World coordinate x
+ * @param y - World coordinate y
+ * @param z - World coordinate z
+ * @param a - Lattice parameter (scaling factor)
+ * @returns FCC coordinates as {i, j, k}
+ */
+export function worldToFcc(x: number, y: number, z: number, a: number = 1): {i: number, j: number, k: number} {
+  const i = (y + z - x) / a;
+  const j = (x + z - y) / a;
+  const k = (x + y - z) / a;
+  
+  return { i, j, k };
+}
+
+/**
+ * Convert world space position to FCC lattice coordinates with rounding
+ * @param x - World coordinate x
+ * @param y - World coordinate y
+ * @param z - World coordinate z
+ * @param a - Lattice parameter (scaling factor)
+ * @param epsilon - Rounding tolerance (default 1e-6)
+ * @returns FCC coordinates as {i, j, k} rounded to nearest integers
+ */
+export function worldToFccRounded(x: number, y: number, z: number, a: number = 1, epsilon: number = 1e-6): {i: number, j: number, k: number} {
+  const coords = worldToFcc(x, y, z, a);
+  
+  return {
+    i: Math.round(coords.i + epsilon),
+    j: Math.round(coords.j + epsilon), 
+    k: Math.round(coords.k + epsilon)
+  };
 }
 
 /**

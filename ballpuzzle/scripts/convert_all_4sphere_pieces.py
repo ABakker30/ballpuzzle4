@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 def main(input_path: str, output_path: str):
-    """Read All 4-Sphere Pieces.txt and write pieces_fcc_AtoY.json."""
+    """DEPRECATED: Use sphere_orientations.py and library_fcc_v1.py instead."""
     
     # Read the input file
     with open(input_path, "r", encoding="utf-8") as f:
