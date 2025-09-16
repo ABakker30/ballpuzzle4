@@ -1,0 +1,10 @@
+{
+  "cid_sha256": "test_container_A_ori0_shifted",
+  "lattice": "fcc",
+  "coordinates": [
+    [1, 1, 0],
+    [2, 1, 0],
+    [1, 0, 1],
+    [2, 0, 1]
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "version": "1.0",
+  "lattice": "fcc",
+  "coordinates": [[0,0,0], [1,0,0], [0,-1,1], [1,-1,1]],
+  "cid_sha256": "test_4cell_pieceA"
+}
