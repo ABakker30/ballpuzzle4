@@ -28,21 +28,13 @@ interface InventoryPanelProps {
 }
 
 function InventoryPanel({ pieces, pieceData, onPieceSelect, selectedPiece }: InventoryPanelProps) {
-  const [previewPiece, setPreviewPiece] = useState<{piece: string, coordinates: number[][]} | null>(null);
-
   if (!pieceData) {
     return <div>Loading pieces...</div>;
   }
 
   const handlePieceClick = (piece: string, coordinates: number[][]) => {
-    setPreviewPiece({piece, coordinates});
-  };
-
-  const handlePreviewSelect = () => {
-    if (previewPiece) {
-      onPieceSelect(previewPiece.piece);
-      setPreviewPiece(null);
-    }
+    // Directly select the piece, bringing it into the 3D viewer
+    onPieceSelect(piece);
   };
 
   return (
@@ -71,15 +63,6 @@ function InventoryPanel({ pieces, pieceData, onPieceSelect, selectedPiece }: Inv
         })}
       </div>
       
-      {previewPiece && (
-        <PieceHoverPreview
-          piece={previewPiece.piece}
-          coordinates={previewPiece.coordinates}
-          color={getPieceColor(previewPiece.piece)}
-          onClose={() => setPreviewPiece(null)}
-          onSelect={handlePreviewSelect}
-        />
-      )}
     </div>
   );
 }
