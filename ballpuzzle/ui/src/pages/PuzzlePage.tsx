@@ -2,10 +2,14 @@ import React, { useState } from "react";
 import * as THREE from "three";
 import { useAppStore } from "../store";
 import { fccToWorld } from '../lib/fcc';
-import { PuzzleViewer3D } from '../components/PuzzleViewer3D';
+import PuzzleViewer3D from "../components/PuzzleViewer3D";
+import SaveLoadPanel from "../components/SaveLoadPanel";
+import SessionStatsPanel from "../components/SessionStatsPanel";
+import UndoRedoControls from "../components/UndoRedoControls";
+import CompletionModal from "../components/CompletionModal";
+import ProgressIndicator from "../components/ProgressIndicator";
 import { computeConvexHull, calculateOrientationMatrix, orientPoints } from '../utils/convexHull';
 import { PieceHoverPreview } from "../components/PieceHoverPreview";
-import { PiecePreview } from "../components/PiecePreview";
 
 // Generate distinct color for each piece (same function as in PiecePreview)
 function getPieceColor(piece: string): string {
@@ -68,22 +72,33 @@ function InventoryPanel({ pieces, pieceData, onPieceSelect, selectedPiece }: Inv
 }
 
 export function PuzzlePage() {
-  const containerObj = useAppStore(s => s.containerObj);
-  const puzzleContainer = useAppStore(s => s.puzzleContainer);
-  const selectedPiece = useAppStore(s => s.selectedPiece);
-  const placedPieces = useAppStore(s => s.placedPieces);
-  const setPuzzleContainer = useAppStore(s => s.setPuzzleContainer);
-  const setSelectedPiece = useAppStore(s => s.setSelectedPiece);
-  const puzzlePieces = useAppStore(s => s.puzzlePieces);
-  const setPuzzlePieces = useAppStore(s => s.setPuzzlePieces);
-  
-  const [containerPoints, setContainerPoints] = React.useState<THREE.Vector3[]>([]);
-  const [orientedPoints, setOrientedPoints] = React.useState<THREE.Vector3[]>([]);
-  const puzzleOrientation = useAppStore(s => s.puzzleOrientation);
-  
+  const { 
+    puzzleContainer, 
+    puzzlePieces, 
+    placedPieces, 
+    selectedPiece, 
+    setSelectedPiece, 
+    puzzleOrientation,
+    setPuzzleContainer,
+    setPuzzlePieces,
+    setPuzzleOrientation
+  } = useAppStore();
+  const [pieces, setPieces] = useState<string[]>([]);
+  const [containerPoints, setContainerPoints] = useState<THREE.Vector3[]>([]);
+  const [orientedPoints, setOrientedPoints] = useState<THREE.Vector3[]>([]);
+  const [hoveredPiece, setHoveredPiece] = useState<string | null>(null);
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [completionResult, setCompletionResult] = useState<any>(null);
+  const [sessionStats] = useState({
+    startTime: Date.now(),
+    totalMoves: 0,
+    totalRotations: 0,
+    totalUndos: 0,
+    totalRedos: 0
+  });
   
   // Default piece library A-Y
-  const pieces = Array.from({ length: 25 }, (_, i) => String.fromCharCode(65 + i));
+  const defaultPieces = Array.from({ length: 25 }, (_, i) => String.fromCharCode(65 + i));
 
   // Load piece library
   React.useEffect(() => {
@@ -197,7 +212,17 @@ export function PuzzlePage() {
   };
 
   const handleCellClick = (position: THREE.Vector3) => {
-    // TODO: Implement piece placement logic
+    console.log('Cell clicked:', position);
+  };
+
+  const handleSolutionComplete = (validationResult: any) => {
+    setCompletionResult(validationResult);
+    setShowCompletionModal(true);
+  };
+
+  const handleCloseCompletionModal = () => {
+    setShowCompletionModal(false);
+    setCompletionResult(null);
   };
 
   const handleLoadContainer = async () => {
@@ -276,16 +301,37 @@ export function PuzzlePage() {
           onPieceSelect={handlePieceSelect}
           selectedPiece={selectedPiece}
         />
-        
-        {selectedPiece && (
-          <div className="card">
-            <h4>Selected: {selectedPiece}</h4>
-            <p style={{ fontSize: "14px", color: "var(--text-muted)" }}>
-              Click and drag in the 3D view to place this piece.
-            </p>
+        <div className="flex-1 flex flex-col">
+          <div className="mb-4 flex justify-between items-start">
+            <div className="flex flex-col gap-4">
+              <UndoRedoControls />
+              <ProgressIndicator 
+                containerPoints={containerPoints}
+                placedPieces={placedPieces}
+              />
+              <SaveLoadPanel 
+                containerPoints={containerPoints}
+                sessionStats={sessionStats}
+              />
+              <SessionStatsPanel />
+            </div>
           </div>
-        )}
+          
+          <PuzzleViewer3D
+            containerPoints={containerPoints}
+            placedPieces={placedPieces}
+            onCellClick={handleCellClick}
+            onSolutionComplete={handleSolutionComplete}
+            hullFaces={puzzleOrientation?.faces}
+          />
+        </div>
       </div>
+      
+      <CompletionModal
+        isOpen={showCompletionModal}
+        onClose={handleCloseCompletionModal}
+        validationResult={completionResult}
+        sessionStats={sessionStats}
+      />
     </div>
   );
-}

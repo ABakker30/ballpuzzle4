@@ -30,12 +30,15 @@ type State = {
   // puzzle state
   puzzleContainer: any | null;
   puzzlePieces: { [key: string]: any } | null;
-  placedPieces: Array<{ piece: string; position: any; rotation: any; id: string }>;
+  placedPieces: Array<{ piece: string; position: any; rotation: any; id: string; occupiedCells: THREE.Vector3[] }>;
   selectedPiece: string | null;
   selectedPieceTransform: {
     position: THREE.Vector3;
     rotation: THREE.Euler;
     snappedToContainer: THREE.Vector3 | null;
+    activeSphereIndex: number;
+    candidateSnapTarget: THREE.Vector3 | null;
+    isSnapped: boolean;
   } | null;
   puzzleOrientation: {
     rotation: THREE.Matrix4;
@@ -50,11 +53,11 @@ type State = {
   
   setPuzzleContainer: (container: any | null) => void;
   setPuzzlePieces: (pieces: { [key: string]: any } | null) => void;
-  setPlacedPieces: (pieces: Array<{ piece: string; position: any; rotation: any; id: string }>) => void;
+  setPlacedPieces: (pieces: Array<{ piece: string; position: any; rotation: any; id: string; occupiedCells: THREE.Vector3[] }>) => void;
   setSelectedPiece: (piece: string | null) => void;
-  setSelectedPieceTransform: (transform: { position: THREE.Vector3; rotation: THREE.Euler; snappedToContainer: THREE.Vector3 | null } | null) => void;
+  setSelectedPieceTransform: (transform: { position: THREE.Vector3; rotation: THREE.Euler; snappedToContainer: THREE.Vector3 | null; activeSphereIndex: number; candidateSnapTarget: THREE.Vector3 | null; isSnapped: boolean } | null) => void;
   setPuzzleOrientation: (orientation: { rotation: THREE.Matrix4; center: THREE.Vector3; groundOffsetY: number; faces?: Array<{ normal: THREE.Vector3; vertices: THREE.Vector3[]; isLargest: boolean }> } | null) => void;
-  addPlacedPiece: (piece: { piece: string; position: any; rotation: any; id: string }) => void;
+  addPlacedPiece: (piece: { piece: string; position: any; rotation: any; id: string; occupiedCells: THREE.Vector3[] }) => void;
   removePlacedPiece: (id: string) => void;
 };
 
