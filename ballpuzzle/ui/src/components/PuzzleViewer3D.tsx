@@ -1,18 +1,22 @@
 import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { Vector3 } from "../lib/fcc";
-
 interface PuzzleViewer3DProps {
-  containerPoints: Vector3[];
+  containerPoints: THREE.Vector3[];
   placedPieces: Array<{ piece: string; position: any; rotation: any; id: string }>;
-  onCellClick?: (position: Vector3) => void;
+  onCellClick?: (position: THREE.Vector3) => void;
+  hullFaces?: Array<{
+    normal: THREE.Vector3;
+    vertices: THREE.Vector3[];
+    isLargest: boolean;
+  }>;
 }
 
 export const PuzzleViewer3D: React.FC<PuzzleViewer3DProps> = ({ 
   containerPoints, 
   placedPieces, 
-  onCellClick 
+  onCellClick,
+  hullFaces
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene>();
@@ -49,13 +53,10 @@ export const PuzzleViewer3D: React.FC<PuzzleViewer3DProps> = ({
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
     directionalLight.position.set(10, 10, 5);
     directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.mapSize.width = 4096;
+    directionalLight.shadow.mapSize.height = 4096;
     scene.add(directionalLight);
 
-    // Grid helper
-    const gridHelper = new THREE.GridHelper(20, 20, 0xcccccc, 0xeeeeee);
-    scene.add(gridHelper);
 
     // Store refs
     sceneRef.current = scene;
@@ -93,14 +94,19 @@ export const PuzzleViewer3D: React.FC<PuzzleViewer3DProps> = ({
     };
   }, []);
 
-  // Update container visualization
   useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
+    if (!sceneRef.current || !rendererRef.current || !cameraRef.current) return;
 
-    // Remove existing container objects
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+
+  
+    // Clear existing objects
     const objectsToRemove = scene.children.filter(child => 
-      (child as any).userData?.type === 'container' || (child as any).userData?.type === 'piece'
+      child.userData.type === 'container' || 
+      child.userData.type === 'piece' || 
+      child.userData.type === 'hull'
     );
     objectsToRemove.forEach(obj => scene.remove(obj));
 
@@ -121,13 +127,13 @@ export const PuzzleViewer3D: React.FC<PuzzleViewer3DProps> = ({
         }
       }
       
-      const sphereRadius = minDistance !== Infinity ? minDistance / 2.1 : 0.4; // Small gap between spheres
+      const sphereRadius = minDistance !== Infinity ? minDistance / 2.0 : 0.4; // Spheres just touch
       
-      const containerGeometry = new THREE.SphereGeometry(sphereRadius, 16, 16);
+      const containerGeometry = new THREE.SphereGeometry(sphereRadius, 32, 32); // Higher quality mesh
       const containerMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x87CEEB, // Light blue color
+        color: 0x00BFFF, // Bright light blue (Deep Sky Blue)
         transparent: true, 
-        opacity: 0.4 // More transparent
+        opacity: 0.3 // More transparent
       });
 
       containerPoints.forEach((point, index) => {
@@ -161,9 +167,9 @@ export const PuzzleViewer3D: React.FC<PuzzleViewer3DProps> = ({
     placedPieces.forEach((placedPiece, index) => {
       const pieceGeometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
       const pieceMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x87CEEB, // Light blue color
+        color: 0x00BFFF, // Bright light blue (Deep Sky Blue)
         transparent: true,
-        opacity: 0.6
+        opacity: 0.8
       });
       
       const pieceMesh = new THREE.Mesh(pieceGeometry, pieceMaterial);
@@ -180,7 +186,7 @@ export const PuzzleViewer3D: React.FC<PuzzleViewer3DProps> = ({
       scene.add(pieceMesh);
     });
 
-  }, [containerPoints, placedPieces]);
+  }, [containerPoints, placedPieces, hullFaces]);
 
   // Handle clicks
   useEffect(() => {

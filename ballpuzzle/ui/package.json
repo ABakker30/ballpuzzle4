@@ -12,9 +12,11 @@
     "@types/three": "^0.180.0",
     "ajv": "^8.12.0",
     "ajv-formats": "^2.1.1",
+    "quickhull3d": "^3.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.180.0",
+    "three-stdlib": "^2.36.0",
     "zustand": "^4.5.5"
   },
   "devDependencies": {

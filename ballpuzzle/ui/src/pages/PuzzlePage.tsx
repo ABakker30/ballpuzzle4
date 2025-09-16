@@ -1,11 +1,11 @@
 import React, { useState } from "react";
 import * as THREE from "three";
 import { useAppStore } from "../store";
-import { fccToWorld, Vector3 } from "../lib/fcc";
-import { computeConvexHull, calculateOrientationMatrix, orientPoints } from "../utils/convexHull";
-import { PiecePreview } from "../components/PiecePreview";
+import { fccToWorld } from '../lib/fcc';
+import { PuzzleViewer3D } from '../components/PuzzleViewer3D';
+import { computeConvexHull, calculateOrientationMatrix, orientPoints } from '../utils/convexHull';
 import { PieceHoverPreview } from "../components/PieceHoverPreview";
-import { PuzzleViewer3D } from "../components/PuzzleViewer3D";
+import { PiecePreview } from "../components/PiecePreview";
 
 // Generate distinct color for each piece (same function as in PiecePreview)
 function getPieceColor(piece: string): string {
@@ -94,8 +94,10 @@ export function PuzzlePage() {
   const puzzlePieces = useAppStore(s => s.puzzlePieces);
   const setPuzzlePieces = useAppStore(s => s.setPuzzlePieces);
   
-  const [containerPoints, setContainerPoints] = React.useState<Vector3[]>([]);
-  const [orientedPoints, setOrientedPoints] = React.useState<Vector3[]>([]);
+  const [containerPoints, setContainerPoints] = React.useState<THREE.Vector3[]>([]);
+  const [orientedPoints, setOrientedPoints] = React.useState<THREE.Vector3[]>([]);
+  const puzzleOrientation = useAppStore(s => s.puzzleOrientation);
+  
   
   // Default piece library A-Y
   const pieces = Array.from({ length: 25 }, (_, i) => String.fromCharCode(65 + i));
@@ -167,46 +169,51 @@ export function PuzzlePage() {
 
   // Load and convert container when containerObj changes
   React.useEffect(() => {
-    if (containerObj && containerObj.coordinates) {
-      console.log('Loading container for puzzle:', containerObj);
+    if (puzzleContainer && (puzzleContainer.coordinates || puzzleContainer.cells)) {
       
       // Convert FCC coordinates to world positions
-      const worldPoints: Vector3[] = [];
-      containerObj.coordinates.forEach(([i, j, k]: [number, number, number]) => {
+      const worldPoints: THREE.Vector3[] = [];
+      const coordinates = puzzleContainer.coordinates || puzzleContainer.cells || [];
+      coordinates.forEach(([i, j, k]: [number, number, number]) => {
         const worldPos = fccToWorld(i, j, k, 1.0);
-        worldPoints.push(worldPos);
+        worldPoints.push(new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z));
       });
+      
       
       setContainerPoints(worldPoints);
       
-      // Compute convex hull and orientation
+      // Compute convex hull and orientation for Y-up (table-top)
       if (worldPoints.length >= 4) {
-        const hullResult = computeConvexHull(worldPoints.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+        const hullResult = computeConvexHull(worldPoints);
         if (hullResult) {
-          const orientationMatrix = calculateOrientationMatrix(hullResult);
-          const oriented = orientPoints(
-            worldPoints.map(p => new THREE.Vector3(p.x, p.y, p.z)),
-            orientationMatrix,
-            hullResult.center
-          );
+          const orientationMatrix = calculateOrientationMatrix(hullResult, 'Y');
+          const { points: oriented, groundOffsetY } = orientPoints(worldPoints, orientationMatrix, hullResult.center);
           
-          const orientedVector3: Vector3[] = oriented.map(p => ({ x: p.x, y: p.y, z: p.z }));
-          setOrientedPoints(orientedVector3);
+          setOrientedPoints(oriented);
           
-          console.log('Container oriented for puzzle placement');
+          // Store orientation in puzzle state
+          useAppStore.getState().setPuzzleOrientation({
+            rotation: orientationMatrix,
+            center: hullResult.center,
+            groundOffsetY,
+            faces: hullResult.faces
+          });
+        } else {
+          setOrientedPoints(worldPoints);
         }
+      } else {
+        setOrientedPoints(worldPoints);
       }
       
-      setPuzzleContainer(containerObj);
+    } else {
     }
-  }, [containerObj, setPuzzleContainer]);
+  }, [puzzleContainer, setPuzzleContainer]);
 
   const handlePieceSelect = (piece: string) => {
     setSelectedPiece(selectedPiece === piece ? null : piece);
   };
 
-  const handleCellClick = (position: Vector3) => {
-    console.log('Cell clicked:', position);
+  const handleCellClick = (position: THREE.Vector3) => {
     // TODO: Implement piece placement logic
   };
 
@@ -225,34 +232,7 @@ export function PuzzlePage() {
         const text = await file.text();
         const containerData = JSON.parse(text);
         
-        console.log('Loaded container for puzzle:', containerData);
-        
-        // Convert FCC coordinates to world positions
-        const worldPoints: Vector3[] = [];
-        const coordinates = containerData.coordinates || containerData.cells || [];
-        coordinates.forEach(([i, j, k]: [number, number, number]) => {
-          const worldPos = fccToWorld(i, j, k, 1.0);
-          worldPoints.push(worldPos);
-        });
-        
-        setContainerPoints(worldPoints);
-        
-        // Compute convex hull and orientation
-        if (worldPoints.length >= 4) {
-          const hullResult = computeConvexHull(worldPoints.map(p => new THREE.Vector3(p.x, p.y, p.z)));
-          if (hullResult) {
-            const orientationMatrix = calculateOrientationMatrix(hullResult);
-            const oriented = orientPoints(
-              worldPoints.map(p => new THREE.Vector3(p.x, p.y, p.z)),
-              orientationMatrix,
-              hullResult.center
-            );
-            
-            const orientedVector3: Vector3[] = oriented.map(p => ({ x: p.x, y: p.y, z: p.z }));
-            setOrientedPoints(orientedVector3);
-          }
-        }
-        
+        // Set the container object to trigger the useEffect pipeline
         setPuzzleContainer(containerData);
       } else {
         alert('File picker not supported in this browser. Please use a modern browser like Chrome or Edge.');
@@ -273,6 +253,7 @@ export function PuzzlePage() {
           containerPoints={orientedPoints.length > 0 ? orientedPoints : containerPoints}
           placedPieces={placedPieces}
           onCellClick={handleCellClick}
+          hullFaces={puzzleOrientation?.faces}
         />
       </div>
       
