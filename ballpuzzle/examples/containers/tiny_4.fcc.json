@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "lattice": "fcc",
+  "cells": [[0,0,0],[1,0,0],[1,1,0],[0,1,0]],
+  "cid": "sha256:ff53293c6a0bffe05b328ecb3b50bc9df363c7a9a2b2a222c7b6883c0b651dad",
+  "designer": {
+    "name": "Anton Bakker",
+    "date": "2025-09-12",
+    "email": "anton@example.com"
+  }
+}

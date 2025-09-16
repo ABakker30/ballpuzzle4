@@ -1,0 +1,7 @@
+{"v": 1, "t_ms": 6, "type": "tick", "metrics": {"nodes": 1, "pruned": 0, "depth": 0, "bestDepth": 0, "solutions": 0}}
+{"v": 1, "t_ms": 11, "type": "tick", "metrics": {"nodes": 2, "pruned": 0, "depth": 1, "bestDepth": 1, "solutions": 0}}
+{"v": 1, "t_ms": 14, "type": "tick", "metrics": {"nodes": 3, "pruned": 0, "depth": 1, "bestDepth": 2, "solutions": 0}}
+{"v": 1, "t_ms": 18, "type": "tick", "metrics": {"nodes": 4, "pruned": 0, "depth": 2, "bestDepth": 2, "solutions": 0}}
+{"v": 1, "t_ms": 21, "type": "tick", "metrics": {"nodes": 5, "pruned": 0, "depth": 2, "bestDepth": 3, "solutions": 0}}
+{"v": 1, "t_ms": 24, "type": "tick", "metrics": {"nodes": 6, "pruned": 0, "depth": 1, "bestDepth": 3, "solutions": 0}}
+{"v": 1, "t_ms": 28, "type": "done", "metrics": {"solutions": 0, "nodes": 10, "pruned": 4, "bestDepth": 3, "smallMode": true, "symGroup": 1, "seed": 123, "maxNodes": 1000}}

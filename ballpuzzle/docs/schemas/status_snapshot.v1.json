@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ballpuzzle.com/schemas/status_snapshot.v1.json",
+  "title": "Ball Puzzle Engine Status Snapshot",
+  "description": "JSON schema for validating status snapshots emitted by DFS and DLX engines during puzzle solving",
+  "type": "object",
+  "properties": {
+    "v": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version"
+    },
+    "ts_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Timestamp in milliseconds since epoch"
+    },
+    "engine": {
+      "type": "string",
+      "enum": ["dfs", "dlx"],
+      "description": "Engine type that generated this snapshot"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z$",
+      "description": "Unique run identifier in ISO format"
+    },
+    "container": {
+      "type": "object",
+      "properties": {
+        "cid": {
+          "type": "string",
+          "description": "Container identifier or hash"
+        },
+        "cells": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of cells in the container"
+        }
+      },
+      "required": ["cid", "cells"],
+      "additionalProperties": false
+    },
+    "k": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Current combination index (DLX) or null (DFS)"
+    },
+    "nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total nodes explored so far"
+    },
+    "pruned": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total nodes pruned so far"
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Current search depth (pieces placed)"
+    },
+    "best_depth": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Best depth reached so far (DFS) or null (DLX)"
+    },
+    "solutions": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of solutions found so far"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Elapsed time in milliseconds since search start"
+    },
+    "stack": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "piece": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 24,
+            "description": "Piece index (0-24 for A-Y)"
+          },
+          "orient": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Orientation index"
+          },
+          "i": {
+            "type": "integer",
+            "description": "FCC lattice coordinate i"
+          },
+          "j": {
+            "type": "integer",
+            "description": "FCC lattice coordinate j"
+          },
+          "k": {
+            "type": "integer",
+            "description": "FCC lattice coordinate k"
+          }
+        },
+        "required": ["piece", "orient", "i", "j", "k"],
+        "additionalProperties": false
+      },
+      "description": "Current placement stack with FCC integer coordinates"
+    },
+    "stack_truncated": {
+      "type": "boolean",
+      "description": "Whether the stack was truncated due to size limits"
+    },
+    "hash_container_cid": {
+      "type": "string",
+      "description": "Container identifier hash"
+    },
+    "hash_solution_sid": {
+      "type": ["string", "null"],
+      "description": "Current solution state hash or null if incomplete"
+    },
+    "phase": {
+      "type": ["string", "null"],
+      "description": "Optional phase label for the current search"
+    }
+  },
+  "required": [
+    "v",
+    "ts_ms",
+    "engine",
+    "run_id",
+    "container",
+    "k",
+    "nodes",
+    "pruned",
+    "depth",
+    "best_depth",
+    "solutions",
+    "elapsed_ms",
+    "stack",
+    "stack_truncated",
+    "hash_container_cid",
+    "hash_solution_sid",
+    "phase"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "v": 1,
+      "ts_ms": 1694123456789,
+      "engine": "dfs",
+      "run_id": "2023-09-08T10-30-56Z",
+      "container": {
+        "cid": "container_abc123",
+        "cells": 16
+      },
+      "k": null,
+      "nodes": 1250,
+      "pruned": 0,
+      "depth": 3,
+      "best_depth": 4,
+      "solutions": 0,
+      "elapsed_ms": 5000,
+      "stack": [
+        {
+          "piece": 0,
+          "orient": 2,
+          "i": 0,
+          "j": 0,
+          "k": 0
+        },
+        {
+          "piece": 4,
+          "orient": 1,
+          "i": 1,
+          "j": 0,
+          "k": 0
+        },
+        {
+          "piece": 19,
+          "orient": 0,
+          "i": 0,
+          "j": 1,
+          "k": 0
+        }
+      ],
+      "stack_truncated": false,
+      "hash_container_cid": "container_abc123",
+      "hash_solution_sid": null,
+      "phase": "initial_search"
+    },
+    {
+      "v": 1,
+      "ts_ms": 1694123461789,
+      "engine": "dlx",
+      "run_id": "2023-09-08T10-31-01Z",
+      "container": {
+        "cid": "container_def456",
+        "cells": 16
+      },
+      "k": 2,
+      "nodes": 850,
+      "pruned": 0,
+      "depth": 2,
+      "best_depth": null,
+      "solutions": 1,
+      "elapsed_ms": 3200,
+      "stack": [
+        {
+          "piece": 0,
+          "orient": 0,
+          "i": 0,
+          "j": 0,
+          "k": 0
+        },
+        {
+          "piece": 4,
+          "orient": 1,
+          "i": 2,
+          "j": 0,
+          "k": 0
+        }
+      ],
+      "stack_truncated": false,
+      "hash_container_cid": "container_def456",
+      "hash_solution_sid": null,
+      "phase": null
+    }
+  ]
+}

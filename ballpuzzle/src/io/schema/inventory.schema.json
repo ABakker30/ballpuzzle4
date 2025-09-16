@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "inventory.schema.json",
+  "title": "Piece Inventory",
+  "type": "object",
+  "required": ["pieces"],
+  "properties": {
+    "pieces": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Z]$": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

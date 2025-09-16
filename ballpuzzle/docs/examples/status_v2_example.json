@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "ts_ms": 1757442511201,
+  "engine": "dfs",
+  "phase": "search",
+  "run_id": "2025-09-09T19-25Z",
+  "container": {
+    "cid": "CID_fcc_100cells_abcd1234",
+    "cells": 100
+  },
+  "metrics": {
+    "nodes": 1069,
+    "pruned": 321,
+    "depth": 2,
+    "solutions": 0,
+    "elapsed_ms": 1726
+  },
+  "stack_truncated": false,
+  "stack": [
+    {
+      "instance_id": 1,
+      "piece_type": 0,
+      "piece_label": "A",
+      "cells": [
+        {"i": 0, "j": 0, "k": 0},
+        {"i": 1, "j": 0, "k": 0},
+        {"i": 0, "j": 1, "k": 0},
+        {"i": 1, "j": 1, "k": 0}
+      ]
+    },
+    {
+      "instance_id": 2,
+      "piece_type": 0,
+      "piece_label": "A",
+      "cells": [
+        {"i": 2, "j": 1, "k": 0},
+        {"i": 3, "j": 1, "k": 0},
+        {"i": 2, "j": 2, "k": 0},
+        {"i": 3, "j": 2, "k": 0}
+      ]
+    }
+  ]
+}

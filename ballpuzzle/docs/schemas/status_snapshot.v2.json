@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Status Snapshot v2",
+  "description": "Ball Puzzle solver status with cells per placement and instance IDs",
+  "type": "object",
+  "required": ["version", "ts_ms", "engine", "phase", "run_id", "container", "metrics", "stack", "stack_truncated"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 2
+    },
+    "ts_ms": {
+      "type": "integer",
+      "description": "Unix timestamp in milliseconds"
+    },
+    "engine": {
+      "type": "string",
+      "enum": ["dfs", "dlx", "c"]
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["init", "search", "verifying", "done"]
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Unique identifier for this solver run"
+    },
+    "container": {
+      "type": "object",
+      "required": ["cid", "cells"],
+      "properties": {
+        "cid": {
+          "type": "string",
+          "description": "Container identifier"
+        },
+        "cells": {
+          "type": "integer",
+          "description": "Total number of cells in container"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["nodes", "pruned", "depth", "solutions", "elapsed_ms"],
+      "properties": {
+        "nodes": {
+          "type": "integer",
+          "description": "Total nodes explored"
+        },
+        "pruned": {
+          "type": "integer",
+          "description": "Nodes pruned by constraints"
+        },
+        "depth": {
+          "type": "integer",
+          "description": "Current search depth"
+        },
+        "solutions": {
+          "type": "integer",
+          "description": "Solutions found so far"
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "description": "Elapsed time in milliseconds"
+        },
+        "best_depth": {
+          "type": "integer",
+          "description": "Best (deepest) depth reached"
+        }
+      }
+    },
+    "stack_truncated": {
+      "type": "boolean",
+      "description": "True if stack was truncated due to --status-max-stack"
+    },
+    "stack": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["instance_id", "piece_type", "piece_label", "cells"],
+        "properties": {
+          "instance_id": {
+            "type": "integer",
+            "description": "Unique instance ID for this placement"
+          },
+          "piece_type": {
+            "type": "integer",
+            "description": "Numeric piece type (0-24 for A-Y)"
+          },
+          "piece_label": {
+            "type": "string",
+            "description": "Human-readable piece label (A-Y)"
+          },
+          "cells": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "required": ["i", "j", "k"],
+              "properties": {
+                "i": {
+                  "type": "integer",
+                  "description": "FCC lattice i coordinate"
+                },
+                "j": {
+                  "type": "integer",
+                  "description": "FCC lattice j coordinate"
+                },
+                "k": {
+                  "type": "integer",
+                  "description": "FCC lattice k coordinate"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

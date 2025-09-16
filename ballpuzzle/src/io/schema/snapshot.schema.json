@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "snapshot.schema.json",
+  "title": "Engine Event",
+  "type": "object",
+  "required": ["v","t_ms","type"],
+  "properties": {
+    "v": { "const": 1 },
+    "t_ms": { "type": "integer", "minimum": 0 },
+    "type": { "type": "string", "enum": ["tick","solution","done"] },
+    "metrics": { "type": "object" },
+    "solution": { "type": "object" }
+  },
+  "additionalProperties": true
+}

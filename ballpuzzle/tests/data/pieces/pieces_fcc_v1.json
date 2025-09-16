@@ -1,0 +1,43 @@
+{
+  "name": "pieces_fcc_v1",
+  "description": "Standard FCC piece library v1 for testing",
+  "lattice_type": "fcc",
+  "pieces": {
+    "single": {
+      "coordinates": [[0, 0, 0]],
+      "count": 4,
+      "description": "Single ball piece"
+    },
+    "line2": {
+      "coordinates": [[0, 0, 0], [1, 0, 0]],
+      "count": 2,
+      "description": "2-ball line piece"
+    },
+    "line3": {
+      "coordinates": [[0, 0, 0], [1, 0, 0], [2, 0, 0]],
+      "count": 1,
+      "description": "3-ball line piece"
+    },
+    "L3": {
+      "coordinates": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+      "count": 2,
+      "description": "3-ball L-shaped piece"
+    },
+    "square4": {
+      "coordinates": [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]],
+      "count": 1,
+      "description": "4-ball square piece"
+    },
+    "T4": {
+      "coordinates": [[0, 0, 0], [1, 0, 0], [2, 0, 0], [1, 1, 0]],
+      "count": 1,
+      "description": "4-ball T-shaped piece"
+    }
+  },
+  "metadata": {
+    "total_pieces": 11,
+    "total_volume": 16,
+    "created_at": "2025-01-07T12:00:00Z",
+    "created_by": "test_generator"
+  }
+}
