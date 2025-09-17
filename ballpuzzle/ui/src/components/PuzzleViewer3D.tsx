@@ -42,6 +42,19 @@ const DEBUG_OPACITY_LEVELS = [1.0, 0.6, 0.3];
 const SNAP_RADIUS = 1.5;
 const AUTO_SNAP_RADIUS = 1.0;
 
+// Generate distinct color for each piece (same as inventory)
+const getPieceColor = (piece: string): number => {
+  const colors = [
+    0xFF6B6B, 0x4ECDC4, 0x45B7D1, 0x96CEB4, 0xFFEAA7,
+    0xDDA0DD, 0x98D8C8, 0xF7DC6F, 0xBB8FCE, 0x85C1E9,
+    0xF8C471, 0x82E0AA, 0xF1948A, 0x85C1E9, 0xD7BDE2,
+    0xA3E4D7, 0xF9E79F, 0xD5A6BD, 0xAED6F1, 0xA9DFBF,
+    0xF5B7B1, 0xD2B4DE, 0xA9CCE3, 0xA3E4D7, 0xF7DC6F
+  ];
+  const index = piece.charCodeAt(0) - 65; // A=0, B=1, etc.
+  return colors[index % colors.length];
+};
+
 export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellClick, onSolutionComplete, hullFaces }: PuzzleViewer3DProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -175,11 +188,14 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       
       const sphereRadius = minDistance !== Infinity ? minDistance / 2.0 : 0.4; // Spheres just touch
       
-      const containerGeometry = new THREE.SphereGeometry(sphereRadius, 32, 32); // Higher quality mesh
+      const containerGeometry = new THREE.SphereGeometry(sphereRadius, 64, 64); // High quality for glass reflections
       const containerMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x00BFFF, // Bright light blue (Deep Sky Blue)
+        color: 0x4A90E2, // Blue glass color
         transparent: true, 
-        opacity: 0.3 // More transparent
+        opacity: 0.25, // Glass-like transparency
+        metalness: 0.1, // Low metalness for glass
+        roughness: 0.0, // Very smooth for glass reflections
+        envMapIntensity: 1.0 // Strong environment reflections
       });
 
       containerPoints.forEach((point, index) => {
@@ -220,12 +236,13 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         pieceData.spheres.forEach((sphere: any, sphereIndex: number) => {
           const sphereGeometry = new THREE.SphereGeometry(0.35, 64, 64);
           
+          const pieceColor = getPieceColor(placedPiece.piece);
           const sphereMaterial = new THREE.MeshStandardMaterial({
-            color: 0x00BFFF, // Same light blue as active pieces
-            metalness: 0.2,
-            roughness: 0.6,
+            color: pieceColor, // Use inventory color
+            metalness: 0.4, // Semi-reflective
+            roughness: 0.3, // Smooth for reflections
             transparent: true,
-            opacity: 0.4 // More transparent to distinguish from active piece
+            opacity: 0.6 // Semi-transparent to distinguish from active piece
           });
           
           const sphereMesh = new THREE.Mesh(sphereGeometry, sphereMaterial);
@@ -285,12 +302,13 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       
       // Generate unique color for this piece
       const pieceIndex = Object.keys(puzzlePieces).indexOf(selectedPiece);
+      const pieceColor = getPieceColor(selectedPiece);
       const pieceMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x00BFFF, // Bright light blue (Deep Sky Blue)
-        metalness: 0.3,
-        roughness: 0.4,
+        color: pieceColor, // Use inventory color
+        metalness: 0.6, // Semi-reflective
+        roughness: 0.2, // Smooth for reflections
         transparent: true,
-        opacity: 0.6 // More transparent like original
+        opacity: 0.85 // Less transparent for better visibility
       });
       
       // Create high-quality sphere for each coordinate in the piece
@@ -697,8 +715,8 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         updateDebugHelpers();
       }
 
-      // AC-4: Update Active Sphere selection each frame based on cursor proximity
-      const newActiveSphere = findActiveSphere(selectedPieceMeshRef.current, mouse);
+      // Active Sphere is fixed during drag - determined at drag start, never changes
+      const activeSphereDuringDrag = dragState.activeSphereIndex;
       
       // Get current time for easing calculation
       const currentTime = performance.now();
@@ -706,7 +724,7 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       const easingProgress = Math.min(elapsedTime / EASING_DURATION_MS, 1.0);
       
       // Calculate target position for Active Sphere center to align with cursor
-      const activeSpherePos = getActiveSpherePosition(selectedPieceMeshRef.current, newActiveSphere);
+      const activeSpherePos = getActiveSpherePosition(selectedPieceMeshRef.current, activeSphereDuringDrag);
       
       // Use raycasting to find exact world position where cursor should align
       const raycaster = new THREE.Raycaster();
@@ -760,18 +778,14 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         selectedPieceMeshRef.current.position.add(clampedOffset);
       }
       
-      // Update drag state with new active sphere
-      setDragState(prev => ({
-        ...prev,
-        activeSphereIndex: newActiveSphere
-      }));
+      // Active Sphere index remains unchanged during drag
       
       // Update transform in store (no snapping in this phase - AC-6)
       setSelectedPieceTransform({
         position: selectedPieceMeshRef.current.position.clone(),
         rotation: selectedPieceMeshRef.current.rotation.clone(),
         snappedToContainer: null,
-        activeSphereIndex: newActiveSphere,
+        activeSphereIndex: activeSphereDuringDrag, // Keep same Active Sphere throughout drag
         candidateSnapTarget: null,
         isSnapped: false
       });
