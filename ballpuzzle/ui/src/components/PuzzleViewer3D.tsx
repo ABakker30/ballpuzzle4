@@ -220,18 +220,12 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         pieceData.spheres.forEach((sphere: any, sphereIndex: number) => {
           const sphereGeometry = new THREE.SphereGeometry(0.35, 64, 64);
           
-          // Use a different color scheme for placed pieces (more muted)
-          const hue = (index * 137.5) % 360; // Golden angle for good distribution
-          const saturation = 60; // Lower saturation for placed pieces
-          const lightness = 50;
-          const color = new THREE.Color().setHSL(hue / 360, saturation / 100, lightness / 100);
-          
           const sphereMaterial = new THREE.MeshStandardMaterial({
-            color: color,
+            color: 0x00BFFF, // Same light blue as active pieces
             metalness: 0.2,
             roughness: 0.6,
             transparent: true,
-            opacity: 0.8 // Slightly transparent to distinguish from active piece
+            opacity: 0.4 // More transparent to distinguish from active piece
           });
           
           const sphereMesh = new THREE.Mesh(sphereGeometry, sphereMaterial);
@@ -374,7 +368,15 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       selectedPieceMeshRef.current = null;
     }
 
-  }, [containerPoints, placedPieces, hullFaces, selectedPiece, puzzlePieces, selectedPieceTransform, setSelectedPieceTransform]);
+  }, [containerPoints, placedPieces, hullFaces, selectedPiece, puzzlePieces, setSelectedPieceTransform]);
+
+  // Update selected piece position when transform changes (without recreating the mesh)
+  useEffect(() => {
+    if (selectedPieceMeshRef.current && selectedPieceTransform) {
+      selectedPieceMeshRef.current.position.copy(selectedPieceTransform.position);
+      selectedPieceMeshRef.current.rotation.copy(selectedPieceTransform.rotation);
+    }
+  }, [selectedPieceTransform]);
 
   // Mouse interaction handlers
   useEffect(() => {
@@ -626,21 +628,9 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       raycaster.setFromCamera(mouse, cameraRef.current);
       const intersects = raycaster.intersectObjects(sceneRef.current.children, true); // recursive = true
 
-      console.log('Mouse down debug:', {
-        intersectsCount: intersects.length,
-        selectedPiece: selectedPiece,
-        hasSelectedMesh: !!selectedPieceMeshRef.current
-      });
-
       if (intersects.length > 0) {
         const intersect = intersects[0];
         const userData = (intersect.object as any).userData;
-        
-        console.log('Intersect debug:', {
-          userData: userData,
-          objectName: intersect.object.name,
-          objectType: intersect.object.type
-        });
         
         if (userData?.type === 'selectedPiece' && userData.interactive && selectedPiece) {
           // Start dragging the selected piece using Move (Pre-Snap) behavior
@@ -683,21 +673,27 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
     };
 
     const handleMouseMove = (event: MouseEvent) => {
-      if (!dragState.isDragging || !selectedPieceMeshRef.current || !cameraRef.current || !rendererRef.current) {
-        return;
-      }
-      
+      if (!rendererRef.current) return;
       
       const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-      // Update debug cursor position
+      // Always update debug cursor position when debug mode is on
       if (debugMode) {
         setDebugCursorPos({
           x: event.clientX - rect.left,
           y: event.clientY - rect.top
         });
+      }
+
+      // Only proceed with drag logic if actually dragging
+      if (!dragState.isDragging || !selectedPieceMeshRef.current || !cameraRef.current) {
+        return;
+      }
+
+      // Update debug helpers during drag (throttled for performance)
+      if (debugMode) {
         updateDebugHelpers();
       }
 
@@ -712,19 +708,25 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       // Calculate target position for Active Sphere center to align with cursor
       const activeSpherePos = getActiveSpherePosition(selectedPieceMeshRef.current, newActiveSphere);
       
-      // Project cursor to world space at the Active Sphere's current depth
-      const cursorWorldPos = new THREE.Vector3(mouse.x, mouse.y, 0.5);
-      cursorWorldPos.unproject(cameraRef.current);
+      // Use raycasting to find exact world position where cursor should align
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mouse, cameraRef.current);
       
-      // Get direction from camera to cursor
-      const cameraPos = cameraRef.current.position;
-      const direction = cursorWorldPos.sub(cameraPos).normalize();
+      // Create a plane at the Active Sphere's depth, perpendicular to camera view
+      const cameraDirection = new THREE.Vector3();
+      cameraRef.current.getWorldDirection(cameraDirection);
+      const plane = new THREE.Plane(cameraDirection, -activeSpherePos.dot(cameraDirection));
       
-      // Calculate distance from camera to Active Sphere
-      const sphereDistance = cameraPos.distanceTo(activeSpherePos);
+      // Find where the cursor ray intersects this plane
+      const targetCursorWorld = new THREE.Vector3();
+      const intersection = raycaster.ray.intersectPlane(plane, targetCursorWorld);
       
-      // Target position where cursor points at the sphere's distance
-      const targetCursorWorld = cameraPos.clone().add(direction.multiplyScalar(sphereDistance));
+      // Fallback if intersection fails (parallel ray to plane)
+      if (!intersection) {
+        const cameraPos = cameraRef.current.position;
+        const sphereDistance = cameraPos.distanceTo(activeSpherePos);
+        targetCursorWorld.copy(cameraPos).add(raycaster.ray.direction.clone().multiplyScalar(sphereDistance));
+      }
       
       if (easingProgress < 1.0) {
         // AC-1: Hybrid easing phase - smooth transition from initial anchor to cursor alignment
@@ -1072,10 +1074,7 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
               </div>
               
               <div style={{ marginBottom: "4px" }}>
-                <span style={{ color: "#ffff00" }}>Easing:</span> {Math.min((performance.now() - dragState.easingStartTime) / EASING_DURATION_MS, 1.0).toFixed(2)}
-                {Math.min((performance.now() - dragState.easingStartTime) / EASING_DURATION_MS, 1.0) < 1.0 && 
-                  <span style={{ color: "#ff8800" }}> (transitioning)</span>
-                }
+                <span style={{ color: "#ffff00" }}>Easing:</span> {dragState.isDragging ? "active" : "idle"}
               </div>
               
               <div style={{ marginBottom: "4px" }}>
