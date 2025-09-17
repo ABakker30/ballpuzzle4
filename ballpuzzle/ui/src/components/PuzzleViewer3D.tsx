@@ -34,6 +34,10 @@ interface DragState {
 const EASING_DURATION_MS = 175;
 const MOVEMENT_AABB_SCALE = 1.5;
 
+// Debug overlay constants
+const DEBUG_PERFORMANCE_BUDGET_MS = 0.2;
+const DEBUG_OPACITY_LEVELS = [1.0, 0.6, 0.3];
+
 // Legacy snap constants (will be removed in snap phase)
 const SNAP_RADIUS = 1.5;
 const AUTO_SNAP_RADIUS = 1.0;
@@ -55,6 +59,15 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
     preDragTransform: null
   });
   const [cameraInitialized, setCameraInitialized] = useState(false);
+  
+  // Debug overlay state
+  const [debugMode, setDebugMode] = useState(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('debug') === 'puzzle-move=true';
+  });
+  const [debugOpacityIndex, setDebugOpacityIndex] = useState(0);
+  const [debugCursorPos, setDebugCursorPos] = useState({ x: 0, y: 0 });
+  const debugHelpersRef = useRef<THREE.Group | null>(null);
 
   // Initialize Three.js scene
   useEffect(() => {
@@ -527,22 +540,159 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       return closestIndex;
     };
 
+    // Debug overlay helper functions
+    const createDebugHelpers = (): THREE.Group => {
+      const debugGroup = new THREE.Group();
+      debugGroup.name = 'debugHelpers';
+      
+      // 1. Movement Box (wireframe AABB × 1.5)
+      const movementAABB = getMovementAABB();
+      const boxGeometry = new THREE.BoxGeometry(
+        movementAABB.max.x - movementAABB.min.x,
+        movementAABB.max.y - movementAABB.min.y,
+        movementAABB.max.z - movementAABB.min.z
+      );
+      const boxMaterial = new THREE.LineBasicMaterial({ 
+        color: 0x00ff00, 
+        transparent: true, 
+        opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] 
+      });
+      const boxWireframe = new THREE.LineSegments(
+        new THREE.EdgesGeometry(boxGeometry), 
+        boxMaterial
+      );
+      const center = movementAABB.getCenter(new THREE.Vector3());
+      boxWireframe.position.copy(center);
+      boxWireframe.name = 'movementBox';
+      debugGroup.add(boxWireframe);
+      
+      // Label for movement box
+      const labelDiv = document.createElement('div');
+      labelDiv.textContent = `movementAABB (${movementAABB.min.x.toFixed(1)},${movementAABB.min.y.toFixed(1)},${movementAABB.min.z.toFixed(1)}) to (${movementAABB.max.x.toFixed(1)},${movementAABB.max.y.toFixed(1)},${movementAABB.max.z.toFixed(1)})`;
+      labelDiv.style.position = 'absolute';
+      labelDiv.style.color = '#00ff00';
+      labelDiv.style.fontSize = '10px';
+      labelDiv.style.pointerEvents = 'none';
+      labelDiv.style.opacity = DEBUG_OPACITY_LEVELS[debugOpacityIndex].toString();
+      
+      return debugGroup;
+    };
+
+    const updateDebugHelpers = () => {
+      if (!debugMode || !sceneRef.current) return;
+      
+      const startTime = performance.now();
+      
+      // Remove existing debug helpers
+      if (debugHelpersRef.current) {
+        sceneRef.current.remove(debugHelpersRef.current);
+      }
+      
+      // Create new debug helpers
+      const debugGroup = createDebugHelpers();
+      
+      // 2. Active Sphere marker (world space)
+      if (selectedPieceMeshRef.current && dragState.isDragging) {
+        const activeSpherePos = getActiveSpherePosition(selectedPieceMeshRef.current, dragState.activeSphereIndex);
+        
+        const sphereGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const sphereMaterial = new THREE.MeshBasicMaterial({ 
+          color: 0xff0000, 
+          transparent: true, 
+          opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] 
+        });
+        const sphereMarker = new THREE.Mesh(sphereGeometry, sphereMaterial);
+        sphereMarker.position.copy(activeSpherePos);
+        sphereMarker.name = 'activeSphereMarker';
+        debugGroup.add(sphereMarker);
+        
+        // Add tag near the piece
+        const tagDiv = document.createElement('div');
+        tagDiv.textContent = `activeSphere=${dragState.activeSphereIndex}`;
+        tagDiv.style.position = 'absolute';
+        tagDiv.style.color = '#ff0000';
+        tagDiv.style.fontSize = '10px';
+        tagDiv.style.pointerEvents = 'none';
+        tagDiv.style.opacity = DEBUG_OPACITY_LEVELS[debugOpacityIndex].toString();
+        
+        // 3. Anchor → Sphere easing line (first 200ms)
+        if (dragState.initialAnchor) {
+          const currentTime = performance.now();
+          const elapsedTime = currentTime - dragState.easingStartTime;
+          
+          if (elapsedTime <= EASING_DURATION_MS) {
+            const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+              dragState.initialAnchor,
+              activeSpherePos
+            ]);
+            const lineMaterial = new THREE.LineBasicMaterial({ 
+              color: 0xffff00, 
+              transparent: true, 
+              opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] * 0.5 
+            });
+            const easingLine = new THREE.Line(lineGeometry, lineMaterial);
+            easingLine.name = 'easingLine';
+            debugGroup.add(easingLine);
+          }
+        }
+        
+        // 4. Clamping indicator
+        const aabb = getMovementAABB();
+        const clampedPos = activeSpherePos.clone().clamp(aabb.min, aabb.max);
+        const isClampedX = Math.abs(clampedPos.x - activeSpherePos.x) > 0.001;
+        const isClampedY = Math.abs(clampedPos.y - activeSpherePos.y) > 0.001;
+        const isClampedZ = Math.abs(clampedPos.z - activeSpherePos.z) > 0.001;
+        
+        if (isClampedX || isClampedY || isClampedZ) {
+          const clampLineGeometry = new THREE.BufferGeometry().setFromPoints([
+            activeSpherePos,
+            clampedPos
+          ]);
+          const clampLineMaterial = new THREE.LineBasicMaterial({ 
+            color: 0xff8800, 
+            transparent: true, 
+            opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] 
+          });
+          const clampLine = new THREE.Line(clampLineGeometry, clampLineMaterial);
+          clampLine.name = 'clampIndicator';
+          debugGroup.add(clampLine);
+        }
+      }
+      
+      debugHelpersRef.current = debugGroup;
+      sceneRef.current.add(debugGroup);
+      
+      // Performance check
+      const endTime = performance.now();
+      const renderTime = endTime - startTime;
+      if (renderTime > DEBUG_PERFORMANCE_BUDGET_MS) {
+        console.warn(`Debug overlay exceeded performance budget: ${renderTime.toFixed(2)}ms > ${DEBUG_PERFORMANCE_BUDGET_MS}ms`);
+      }
+    };
+
     const handleMouseDown = (event: MouseEvent) => {
       if (event.button !== 0) return; // Only left mouse button
       
-      const rect = renderer.domElement.getBoundingClientRect();
+      if (!rendererRef.current || !cameraRef.current || !sceneRef.current) return;
+      
+      const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-      raycaster.setFromCamera(mouse, camera);
-      const intersects = raycaster.intersectObjects(scene.children);
+      raycaster.setFromCamera(mouse, cameraRef.current);
+      const intersects = raycaster.intersectObjects(sceneRef.current.children);
+
+      console.log('Mouse down - intersects:', intersects.length, 'selectedPiece:', selectedPiece);
 
       if (intersects.length > 0) {
         const intersect = intersects[0];
         const userData = (intersect.object as any).userData;
         
+        console.log('Intersect userData:', userData);
+        
         if (userData?.type === 'selectedPiece' && userData.interactive && selectedPiece) {
           // Start dragging the selected piece using Move (Pre-Snap) behavior
+          console.log('Starting drag for piece:', selectedPiece);
           event.preventDefault();
           
           const selectedMesh = selectedPieceMeshRef.current;
@@ -582,11 +732,24 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
     };
 
     const handleMouseMove = (event: MouseEvent) => {
-      if (!dragState.isDragging || !selectedPieceMeshRef.current || !cameraRef.current || !rendererRef.current) return;
+      if (!dragState.isDragging || !selectedPieceMeshRef.current || !cameraRef.current || !rendererRef.current) {
+        return;
+      }
+      
+      console.log('Mouse move during drag - easingProgress will be calculated');
       
       const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      // Update debug cursor position
+      if (debugMode) {
+        setDebugCursorPos({
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top
+        });
+        updateDebugHelpers();
+      }
 
       // AC-4: Update Active Sphere selection each frame based on cursor proximity
       const newActiveSphere = findActiveSphere(selectedPieceMeshRef.current, mouse);
@@ -699,12 +862,14 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       }
       
       // Check if mouse is over the selected piece by raycasting
-      const rect = renderer.domElement.getBoundingClientRect();
-      const mouse = new THREE.Vector2();
-      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      if (!rendererRef.current || !cameraRef.current) return;
+      
+      const rect = rendererRef.current.domElement.getBoundingClientRect();
+      const wheelMouse = new THREE.Vector2();
+      wheelMouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      wheelMouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-      raycaster.setFromCamera(mouse, camera);
+      raycaster.setFromCamera(wheelMouse, cameraRef.current);
       const intersects = raycaster.intersectObject(selectedPieceMeshRef.current, true);
       
       if (intersects.length === 0) {
@@ -751,6 +916,30 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
 
     // Keyboard event handlers
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Debug mode toggles (work regardless of piece selection)
+      if (event.altKey && event.key.toLowerCase() === 'd') {
+        event.preventDefault();
+        if (event.shiftKey) {
+          // Alt+Shift+D: cycle opacity
+          setDebugOpacityIndex((prev) => (prev + 1) % DEBUG_OPACITY_LEVELS.length);
+          if (debugMode) {
+            updateDebugHelpers();
+          }
+        } else {
+          // Alt+D: toggle debug mode
+          setDebugMode((prev) => {
+            const newMode = !prev;
+            if (!newMode && debugHelpersRef.current && sceneRef.current) {
+              // Clean up debug helpers when turning off
+              sceneRef.current.remove(debugHelpersRef.current);
+              debugHelpersRef.current = null;
+            }
+            return newMode;
+          });
+        }
+        return;
+      }
+      
       if (!selectedPieceMeshRef.current || !selectedPieceTransform) return;
       
       switch (event.key.toLowerCase()) {
@@ -867,16 +1056,52 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
   }, [dragState, selectedPieceTransform, setSelectedPieceTransform, containerPoints, onCellClick, placedPieces]);
 
   return (
-    <div 
-      ref={mountRef} 
-      style={{ 
-        width: "100%", 
-        height: "100%", 
-        minHeight: "400px",
-        border: "1px solid var(--border)",
-        borderRadius: "8px",
-        overflow: "hidden"
-      }} 
-    />
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div 
+        ref={mountRef} 
+        style={{ 
+          width: "100%", 
+          height: "100%", 
+          minHeight: "400px",
+          border: "1px solid var(--border)",
+          borderRadius: "8px",
+          overflow: "hidden"
+        }} 
+      />
+      
+      {/* Debug HUD */}
+      {debugMode && (
+        <div
+          style={{
+            position: "absolute",
+            top: "10px",
+            left: "10px",
+            backgroundColor: "rgba(0, 0, 0, 0.8)",
+            color: "#00ff00",
+            padding: "8px",
+            borderRadius: "4px",
+            fontFamily: "monospace",
+            fontSize: "11px",
+            pointerEvents: "none",
+            opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex],
+            zIndex: 1000
+          }}
+        >
+          <div>🐛 DEBUG MODE</div>
+          <div>drag={dragState.isDragging ? "ON" : "OFF"}</div>
+          <div>cursor=({debugCursorPos.x.toFixed(0)},{debugCursorPos.y.toFixed(0)})</div>
+          {selectedPieceMeshRef.current && dragState.isDragging && (
+            <>
+              <div>activeSphere={dragState.activeSphereIndex}</div>
+              <div>cameraLocked={controlsRef.current ? !controlsRef.current.enabled : false}</div>
+              <div>easingProgress={Math.min((performance.now() - dragState.easingStartTime) / EASING_DURATION_MS, 1.0).toFixed(2)}</div>
+            </>
+          )}
+          <div style={{ marginTop: "4px", fontSize: "9px", opacity: 0.7 }}>
+            Alt+D: toggle | Alt+Shift+D: opacity
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
