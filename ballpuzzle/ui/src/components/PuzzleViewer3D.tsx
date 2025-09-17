@@ -149,12 +149,9 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
   
     // Clear existing objects
     const objectsToRemove = scene.children.filter(child => 
-      child.userData.type === 'container' || 
       child.userData.type === 'piece' || 
       child.userData.type === 'selectedPiece' || 
       child.userData.type === 'placedPiece' ||
-      child.userData.type === 'candidateRing' ||
-      child.userData.type === 'snapRing' ||
       child.userData.type === 'hull'
     );
     objectsToRemove.forEach(obj => scene.remove(obj));
@@ -205,63 +202,12 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         (sphere as any).userData = { type: 'container', index, position: point, occupied: isOccupied };
         scene.add(sphere);
         
-        // Add candidate target ring (initially hidden) - only for empty cells
-        if (!isOccupied) {
-          const ringGeometry = new THREE.RingGeometry(sphereRadius * 1.2, sphereRadius * 1.5, 16);
-          const ringMaterial = new THREE.MeshBasicMaterial({ 
-            color: 0xFFFF00, // Yellow for candidate
-            transparent: true, 
-            opacity: 0.0, // Initially hidden
-            side: THREE.DoubleSide
-          });
-          const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-          ring.position.copy(sphere.position);
-          ring.rotation.x = Math.PI / 2; // Lay flat
-          (ring as any).userData = { type: 'candidateRing', cellIndex: index };
-          scene.add(ring);
-        }
+        // No visual aids - realism-first approach
       });
       
-      // Add snap target indicator (pulsing ring for active target)
-      if (selectedPieceTransform?.candidateSnapTarget) {
-        const targetPos = selectedPieceTransform.candidateSnapTarget;
-        const snapRingGeometry = new THREE.RingGeometry(sphereRadius * 1.5, sphereRadius * 2.0, 16);
-        const snapRingMaterial = new THREE.MeshBasicMaterial({ 
-          color: 0x00FF00, // Green for snap target
-          transparent: true, 
-          opacity: 0.8,
-          side: THREE.DoubleSide
-        });
-        const snapRing = new THREE.Mesh(snapRingGeometry, snapRingMaterial);
-        snapRing.position.copy(targetPos);
-        snapRing.rotation.x = Math.PI / 2;
-        (snapRing as any).userData = { type: 'snapRing' };
-        scene.add(snapRing);
-        
-        // Add pulsing animation
-        const time = Date.now() * 0.005;
-        snapRing.scale.setScalar(1 + Math.sin(time) * 0.1);
-      }
+      // No visual aids - realism-first approach
       
-      // Show candidate rings for nearby cells when dragging
-      if (selectedPieceTransform && dragState.isDragging) {
-        containerPoints.forEach((point, index) => {
-          if (!isCellOccupied(point)) {
-            const distance = selectedPieceTransform.candidateSnapTarget?.distanceTo(point) || Infinity;
-            if (distance < SNAP_RADIUS) {
-              // Find and show the candidate ring
-              const candidateRing = scene.children.find(child => 
-                child.userData.type === 'candidateRing' && child.userData.cellIndex === index
-              ) as THREE.Mesh;
-              
-              if (candidateRing) {
-                const material = candidateRing.material as THREE.MeshBasicMaterial;
-                material.opacity = Math.max(0.3, 1.0 - (distance / SNAP_RADIUS));
-              }
-            }
-          }
-        });
-      }
+      // No visual aids - realism-first approach
       
       // Render placed pieces
       placedPieces.forEach((placedPiece, index) => {
@@ -310,23 +256,7 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         scene.add(pieceGroup);
       });
 
-      // Auto-fit camera to container only on first load
-      if (cameraRef.current && controlsRef.current && !cameraInitialized) {
-        const box = new THREE.Box3();
-        containerPoints.forEach(point => {
-          box.expandByPoint(new THREE.Vector3(point.x, point.y, point.z));
-        });
-        
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y, size.z);
-        
-        controlsRef.current.target.copy(center);
-        cameraRef.current.position.copy(center);
-        cameraRef.current.position.add(new THREE.Vector3(maxDim * 1.5, maxDim * 1.5, maxDim * 1.5));
-        controlsRef.current.update();
-        setCameraInitialized(true);
-      }
+      // Camera is user-controlled only - no automatic adjustments
     }
 
     // Add placed pieces (placeholder visualization)
@@ -396,12 +326,7 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         selectedPieceMesh.position.copy(selectedPieceTransform.position);
         selectedPieceMesh.rotation.copy(selectedPieceTransform.rotation);
         
-        // Highlight active sphere
-        if (selectedPieceMesh.children[selectedPieceTransform.activeSphereIndex]) {
-          const activeSphere = selectedPieceMesh.children[selectedPieceTransform.activeSphereIndex] as THREE.Mesh;
-          const material = activeSphere.material as THREE.MeshStandardMaterial;
-          material.emissive.setHex(0x444444); // Slight glow for active sphere
-        }
+        // No visual highlighting - realism-first approach
       } else {
         // Default position above container center
         const containerCenter = new THREE.Vector3();
@@ -425,12 +350,7 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
           isSnapped: false
         });
         
-        // Highlight first sphere as active
-        if (selectedPieceMesh.children[0]) {
-          const activeSphere = selectedPieceMesh.children[0] as THREE.Mesh;
-          const material = activeSphere.material as THREE.MeshStandardMaterial;
-          material.emissive.setHex(0x444444);
-        }
+        // No visual highlighting - realism-first approach
       }
       
       selectedPieceMesh.castShadow = true;
