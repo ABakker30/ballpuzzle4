@@ -21,12 +21,20 @@ interface PuzzleViewer3DProps {
 
 interface DragState {
   isDragging: boolean;
-  dragStart: THREE.Vector2;
-  dragPlane: THREE.Plane;
-  dragOffset: THREE.Vector3;
+  initialAnchor: THREE.Vector3 | null;
+  activeSphereIndex: number;
+  easingStartTime: number;
+  preDragTransform: {
+    position: THREE.Vector3;
+    rotation: THREE.Euler;
+  } | null;
 }
 
-// Snap targeting constants
+// Move (Pre-Snap) constants
+const EASING_DURATION_MS = 175;
+const MOVEMENT_AABB_SCALE = 1.5;
+
+// Legacy snap constants (will be removed in snap phase)
 const SNAP_RADIUS = 1.5;
 const AUTO_SNAP_RADIUS = 1.0;
 
@@ -41,9 +49,10 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
   const { selectedPiece, selectedPieceTransform, setSelectedPieceTransform, puzzlePieces } = useAppStore();
   const [dragState, setDragState] = useState<DragState>({
     isDragging: false,
-    dragStart: new THREE.Vector2(),
-    dragPlane: new THREE.Plane(),
-    dragOffset: new THREE.Vector3()
+    initialAnchor: null,
+    activeSphereIndex: 0,
+    easingStartTime: 0,
+    preDragTransform: null
   });
   const [cameraInitialized, setCameraInitialized] = useState(false);
 
@@ -473,6 +482,51 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       return worldPos;
     };
 
+    // Helper function to calculate movement AABB (puzzle shape × 1.5)
+    const getMovementAABB = (): THREE.Box3 => {
+      const box = new THREE.Box3();
+      if (containerPoints.length === 0) {
+        return box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(10, 10, 10));
+      }
+      
+      containerPoints.forEach(point => box.expandByPoint(point));
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      size.multiplyScalar(MOVEMENT_AABB_SCALE);
+      return box.setFromCenterAndSize(center, size);
+    };
+
+    // Helper function to find closest sphere to cursor (Active Sphere selection)
+    const findActiveSphere = (pieceGroup: THREE.Object3D, mousePos: THREE.Vector2): number => {
+      if (!cameraRef.current || !rendererRef.current) return 0;
+      
+      let closestIndex = 0;
+      let minDistance = Infinity;
+      
+      for (let i = 0; i < pieceGroup.children.length; i++) {
+        const sphere = pieceGroup.children[i];
+        const screenPos = new THREE.Vector3();
+        sphere.getWorldPosition(screenPos);
+        screenPos.project(cameraRef.current);
+        
+        // Convert to screen coordinates
+        const x = (screenPos.x * 0.5 + 0.5) * rendererRef.current.domElement.clientWidth;
+        const y = (screenPos.y * -0.5 + 0.5) * rendererRef.current.domElement.clientHeight;
+        
+        // Convert mouse from NDC to screen coordinates
+        const mouseX = (mousePos.x * 0.5 + 0.5) * rendererRef.current.domElement.clientWidth;
+        const mouseY = (mousePos.y * -0.5 + 0.5) * rendererRef.current.domElement.clientHeight;
+        
+        const distance = Math.sqrt((x - mouseX) ** 2 + (y - mouseY) ** 2);
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestIndex = i;
+        }
+      }
+      
+      return closestIndex;
+    };
+
     const handleMouseDown = (event: MouseEvent) => {
       if (event.button !== 0) return; // Only left mouse button
       
@@ -487,27 +541,38 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         const intersect = intersects[0];
         const userData = (intersect.object as any).userData;
         
-        if (userData?.type === 'selectedPiece' && userData.interactive) {
-          // Start dragging the selected piece
+        if (userData?.type === 'selectedPiece' && userData.interactive && selectedPiece) {
+          // Start dragging the selected piece using Move (Pre-Snap) behavior
           event.preventDefault();
-          controls.enabled = false;
           
           const selectedMesh = selectedPieceMeshRef.current;
           if (selectedMesh) {
-            // Create drag plane perpendicular to camera
-            const cameraDirection = new THREE.Vector3();
-            camera.getWorldDirection(cameraDirection);
-            const dragPlane = new THREE.Plane(cameraDirection, -intersect.distance);
+            // Record drag start for session stats
+            recordDragStart(selectedPiece);
             
-            // Calculate offset from piece center to intersection point
-            const dragOffset = new THREE.Vector3();
-            dragOffset.subVectors(selectedMesh.position, intersect.point);
+            // AC-1: Record exact mesh hit point as initial anchor (no jump)
+            const initialAnchor = intersect.point.clone();
+            
+            // Find initial active sphere based on cursor proximity
+            const initialActiveSphere = findActiveSphere(selectedMesh, mouse);
+            
+            // Store pre-drag transform for potential Esc cancel (AC-8)
+            const preDragTransform = {
+              position: selectedMesh.position.clone(),
+              rotation: selectedMesh.rotation.clone()
+            };
+            
+            // AC-3: Disable camera controls during drag
+            if (controlsRef.current) {
+              controlsRef.current.enabled = false;
+            }
             
             setDragState({
               isDragging: true,
-              dragStart: mouse.clone(),
-              dragPlane,
-              dragOffset
+              initialAnchor,
+              activeSphereIndex: initialActiveSphere,
+              easingStartTime: performance.now(),
+              preDragTransform
             });
           }
         } else if (userData?.type === 'container' && userData.position && onCellClick) {
@@ -517,104 +582,84 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
     };
 
     const handleMouseMove = (event: MouseEvent) => {
-      if (!dragState.isDragging || !selectedPieceMeshRef.current) return;
+      if (!dragState.isDragging || !selectedPieceMeshRef.current || !cameraRef.current || !rendererRef.current) return;
       
-      const rect = renderer.domElement.getBoundingClientRect();
+      const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-      raycaster.setFromCamera(mouse, camera);
+      // AC-4: Update Active Sphere selection each frame based on cursor proximity
+      const newActiveSphere = findActiveSphere(selectedPieceMeshRef.current, mouse);
       
-      const intersectPoint = new THREE.Vector3();
-      if (raycaster.ray.intersectPlane(dragState.dragPlane, intersectPoint)) {
-        const newPosition = intersectPoint.add(dragState.dragOffset);
-        selectedPieceMeshRef.current.position.copy(newPosition);
+      // Get current time for easing calculation
+      const currentTime = performance.now();
+      const elapsedTime = currentTime - dragState.easingStartTime;
+      const easingProgress = Math.min(elapsedTime / EASING_DURATION_MS, 1.0);
+      
+      // Calculate target position for Active Sphere center to align with cursor
+      const activeSpherePos = getActiveSpherePosition(selectedPieceMeshRef.current, newActiveSphere);
+      
+      // Project cursor to world space at the Active Sphere's current depth
+      const cursorWorldPos = new THREE.Vector3(mouse.x, mouse.y, 0.5);
+      cursorWorldPos.unproject(cameraRef.current);
+      
+      // Get direction from camera to cursor
+      const cameraPos = cameraRef.current.position;
+      const direction = cursorWorldPos.sub(cameraPos).normalize();
+      
+      // Calculate distance from camera to Active Sphere
+      const sphereDistance = cameraPos.distanceTo(activeSpherePos);
+      
+      // Target position where cursor points at the sphere's distance
+      const targetCursorWorld = cameraPos.clone().add(direction.multiplyScalar(sphereDistance));
+      
+      if (easingProgress < 1.0) {
+        // AC-1: Hybrid easing phase - smooth transition from initial anchor to cursor alignment
+        const initialOffset = dragState.initialAnchor!.clone().sub(activeSpherePos);
+        const targetOffset = targetCursorWorld.clone().sub(activeSpherePos);
         
-        // Check for snapping to container points using active sphere position
-        const activeSpherePos = getActiveSpherePosition(selectedPieceMeshRef.current, selectedPieceTransform?.activeSphereIndex || 0);
-        const snapResult = findClosestContainerPoint(activeSpherePos);
+        // Smooth easing function (ease-out cubic)
+        const t = 1 - Math.pow(1 - easingProgress, 3);
+        const currentOffset = initialOffset.lerp(targetOffset, t);
         
-        let candidateTarget = null;
-        let snapPoint = null;
+        // AC-5: Clamp to movement AABB
+        const aabb = getMovementAABB();
+        const clampedActiveSpherePos = activeSpherePos.clone().add(currentOffset);
+        clampedActiveSpherePos.clamp(aabb.min, aabb.max);
         
-        if (snapResult && snapResult.distance <= SNAP_RADIUS) {
-          // Check if target cell is occupied
-          const isTargetOccupied = isCellOccupied(snapResult.point);
-          
-          if (!isTargetOccupied) {
-            candidateTarget = snapResult.point;
-            
-            // Check for collision with other pieces
-            const wouldCollide = selectedPiece && wouldCauseCollision(
-              selectedPiece,
-              selectedPieceMeshRef.current.position,
-              selectedPieceMeshRef.current.rotation
-            );
-            
-            if (!wouldCollide && snapResult.distance <= AUTO_SNAP_RADIUS) {
-              snapPoint = snapResult.point;
-              // Auto-snap: align active sphere to target cell
-              const offset = new THREE.Vector3().subVectors(snapResult.point, activeSpherePos);
-              selectedPieceMeshRef.current.position.add(offset);
-            }
-          }
-        }
+        // Adjust piece position to keep Active Sphere at clamped position
+        const adjustment = clampedActiveSpherePos.clone().sub(activeSpherePos);
+        selectedPieceMeshRef.current.position.add(adjustment);
+      } else {
+        // AC-2: After easing, cursor coincides with Active Sphere center (≤1px)
+        // Calculate offset needed to align Active Sphere center with cursor world position
+        const offset = targetCursorWorld.clone().sub(activeSpherePos);
         
-        // Update transform in store
-        setSelectedPieceTransform({
-          position: selectedPieceMeshRef.current.position.clone(),
-          rotation: selectedPieceMeshRef.current.rotation.clone(),
-          snappedToContainer: snapPoint,
-          activeSphereIndex: selectedPieceTransform?.activeSphereIndex || 0,
-          candidateSnapTarget: candidateTarget,
-          isSnapped: snapPoint !== null
-        });
+        // AC-5: Clamp Active Sphere position to movement AABB
+        const newActiveSpherePos = activeSpherePos.clone().add(offset);
+        const aabb = getMovementAABB();
+        const clampedActiveSpherePos = newActiveSpherePos.clone().clamp(aabb.min, aabb.max);
         
-        // If piece is snapped, place it permanently
-        if (selectedPieceTransform?.isSnapped && selectedPiece && selectedPieceMeshRef.current) {
-          const occupiedCells = calculatePieceOccupancy(
-            selectedPiece,
-            selectedPieceMeshRef.current.position,
-            selectedPieceMeshRef.current.rotation
-          );
-          
-          // Add to placed pieces
-          const placedPiece = {
-            piece: selectedPiece,
-            position: selectedPieceMeshRef.current.position.clone(),
-            rotation: selectedPieceMeshRef.current.rotation.clone(),
-            id: `placed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            occupiedCells
-          };
-          
-          useAppStore.getState().addPlacedPiece(placedPiece);
-          
-          // Record action for undo/redo
-          recordUndoPlacement(placedPiece);
-          
-          // Record session statistics
-          recordPiecePlacement(selectedPiece, {
-            x: selectedPieceMeshRef.current.position.x,
-            y: selectedPieceMeshRef.current.position.y,
-            z: selectedPieceMeshRef.current.position.z
-          });
-          recordSnap(selectedPiece, {
-            x: selectedPieceMeshRef.current.position.x,
-            y: selectedPieceMeshRef.current.position.y,
-            z: selectedPieceMeshRef.current.position.z
-          });
-          
-          // Check for solution completion
-          const validationResult = validateSolution(containerPoints, [...useAppStore.getState().placedPieces, placedPiece]);
-          if (validationResult.isComplete && onSolutionComplete) {
-            onSolutionComplete(validationResult);
-          }
-          
-          // Clear selected piece
-          useAppStore.getState().setSelectedPiece(null);
-          setSelectedPieceTransform(null);
-        }
+        // Apply the clamped offset to the piece
+        const clampedOffset = clampedActiveSpherePos.clone().sub(activeSpherePos);
+        selectedPieceMeshRef.current.position.add(clampedOffset);
       }
+      
+      // Update drag state with new active sphere
+      setDragState(prev => ({
+        ...prev,
+        activeSphereIndex: newActiveSphere
+      }));
+      
+      // Update transform in store (no snapping in this phase - AC-6)
+      setSelectedPieceTransform({
+        position: selectedPieceMeshRef.current.position.clone(),
+        rotation: selectedPieceMeshRef.current.rotation.clone(),
+        snappedToContainer: null,
+        activeSphereIndex: newActiveSphere,
+        candidateSnapTarget: null,
+        isSnapped: false
+      });
     };
 
     const handleMouseUp = (event: MouseEvent) => {
@@ -626,14 +671,19 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
           recordDragEnd(selectedPiece);
         }
         
-        // End dragging
+        // AC-7: Piece remains at final position on LMB release
+        // AC-3: Re-enable camera controls
         setDragState({
           isDragging: false,
-          dragStart: new THREE.Vector2(),
-          dragPlane: new THREE.Plane(),
-          dragOffset: new THREE.Vector3()
+          initialAnchor: null,
+          activeSphereIndex: 0,
+          easingStartTime: 0,
+          preDragTransform: null
         });
-        controls.enabled = true;
+        
+        if (controlsRef.current) {
+          controlsRef.current.enabled = true;
+        }
       }
     };
 
@@ -733,13 +783,33 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
           // Cancel drag or deselect piece
           event.preventDefault();
           if (dragState.isDragging) {
+            // AC-8: Esc reverts to pre-drag state
+            if (dragState.preDragTransform && selectedPieceMeshRef.current) {
+              selectedPieceMeshRef.current.position.copy(dragState.preDragTransform.position);
+              selectedPieceMeshRef.current.rotation.copy(dragState.preDragTransform.rotation);
+              
+              // Update transform in store
+              setSelectedPieceTransform({
+                position: dragState.preDragTransform.position.clone(),
+                rotation: dragState.preDragTransform.rotation.clone(),
+                snappedToContainer: null,
+                activeSphereIndex: 0,
+                candidateSnapTarget: null,
+                isSnapped: false
+              });
+            }
+            
             setDragState({
               isDragging: false,
-              dragStart: new THREE.Vector2(),
-              dragPlane: new THREE.Plane(),
-              dragOffset: new THREE.Vector3()
+              initialAnchor: null,
+              activeSphereIndex: 0,
+              easingStartTime: 0,
+              preDragTransform: null
             });
-            controls.enabled = true;
+            
+            if (controlsRef.current) {
+              controlsRef.current.enabled = true;
+            }
           } else {
             // Deselect piece
             useAppStore.getState().setSelectedPiece(null);
