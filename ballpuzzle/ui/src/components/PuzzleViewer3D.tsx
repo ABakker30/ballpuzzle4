@@ -160,14 +160,22 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
     const camera = cameraRef.current;
 
   
-    // Clear existing objects
-    const objectsToRemove = scene.children.filter(child => 
-      child.userData.type === 'piece' || 
-      child.userData.type === 'selectedPiece' || 
-      child.userData.type === 'placedPiece' ||
-      child.userData.type === 'hull'
-    );
-    objectsToRemove.forEach(obj => scene.remove(obj));
+    // CLEAR EVERYTHING when new container loads - start fresh
+    const allObjects = [...scene.children];
+    allObjects.forEach(obj => {
+      if (obj.userData?.type) { // Only remove our objects, keep lights etc
+        scene.remove(obj);
+      }
+    });
+
+    // Clear only puzzle-related state when loading new container (avoid infinite loop)
+    if (containerPoints.length > 0) {
+      const store = useAppStore.getState();
+      if (store.selectedPiece !== null) store.setSelectedPiece(null);
+      if (store.placedPieces.length > 0) store.setPlacedPieces([]);
+      setSelectedPieceTransform(null);
+      selectedPieceMeshRef.current = null;
+    }
 
     // Add container points with visual feedback for targeting
     if (containerPoints.length > 0) {
@@ -293,100 +301,9 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       scene.add(pieceMesh);
     });
 
-    // Add selected piece if one is selected
-    if (selectedPiece && puzzlePieces && puzzlePieces[selectedPiece]) {
-      const pieceCoordinates = puzzlePieces[selectedPiece];
-      
-      // Create piece geometry from actual coordinates
-      const pieceGroup = new THREE.Group();
-      
-      // Generate unique color for this piece
-      const pieceIndex = Object.keys(puzzlePieces).indexOf(selectedPiece);
-      const pieceColor = getPieceColor(selectedPiece);
-      const pieceMaterial = new THREE.MeshStandardMaterial({ 
-        color: pieceColor, // Use inventory color
-        metalness: 0.6, // Semi-reflective
-        roughness: 0.2, // Smooth for reflections
-        transparent: true,
-        opacity: 0.85 // Less transparent for better visibility
-      });
-      
-      // Create high-quality sphere for each coordinate in the piece
-      const sphereRadius = 0.35; // Slightly smaller than container spheres for distinction
-      const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 64, 64); // Much higher quality mesh
-      
-      pieceCoordinates.forEach(([i, j, k]: [number, number, number]) => {
-        // Convert FCC coordinates to world position
-        const worldPos = fccToWorld(i, j, k);
-        
-        const sphere = new THREE.Mesh(sphereGeometry, pieceMaterial);
-        sphere.position.set(worldPos.x, worldPos.y, worldPos.z);
-        sphere.castShadow = true;
-        sphere.receiveShadow = true;
-        
-        pieceGroup.add(sphere);
-      });
-      
-      const selectedPieceMesh = pieceGroup;
-      
-      // Set initial position and rotation from store or default
-      if (selectedPieceTransform) {
-        selectedPieceMesh.position.copy(selectedPieceTransform.position);
-        selectedPieceMesh.rotation.copy(selectedPieceTransform.rotation);
-        
-        // No visual highlighting - realism-first approach
-      } else {
-        // Default position above container center
-        const containerCenter = new THREE.Vector3();
-        if (containerPoints.length > 0) {
-          containerPoints.forEach(point => containerCenter.add(point));
-          containerCenter.divideScalar(containerPoints.length);
-        }
-        selectedPieceMesh.position.set(
-          containerCenter.x,
-          containerCenter.y + 3,
-          containerCenter.z
-        );
-        
-        // Initialize transform in store
-        setSelectedPieceTransform({
-          position: selectedPieceMesh.position.clone(),
-          rotation: selectedPieceMesh.rotation.clone(),
-          snappedToContainer: null,
-          activeSphereIndex: 0,
-          candidateSnapTarget: null,
-          isSnapped: false
-        });
-        
-        // No visual highlighting - realism-first approach
-      }
-      
-      selectedPieceMesh.castShadow = true;
-      selectedPieceMesh.receiveShadow = true;
-      
-      // Set userData on parent group
-      (selectedPieceMesh as any).userData = { 
-        type: 'selectedPiece', 
-        piece: selectedPiece,
-        interactive: true
-      };
-      
-      // Also set userData on all sphere children for raycasting
-      selectedPieceMesh.children.forEach((sphere) => {
-        (sphere as any).userData = { 
-          type: 'selectedPiece', 
-          piece: selectedPiece,
-          interactive: true
-        };
-      });
-      
-      scene.add(selectedPieceMesh);
-      selectedPieceMeshRef.current = selectedPieceMesh;
-    } else {
-      selectedPieceMeshRef.current = null;
-    }
+    // Selected piece is now handled by separate useEffect
 
-  }, [containerPoints, placedPieces, hullFaces, selectedPiece, puzzlePieces, setSelectedPieceTransform]);
+  }, [containerPoints, placedPieces, hullFaces, puzzlePieces, setSelectedPieceTransform]);
 
   // Update selected piece position when transform changes (without recreating the mesh)
   useEffect(() => {
@@ -395,6 +312,91 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       selectedPieceMeshRef.current.rotation.copy(selectedPieceTransform.rotation);
     }
   }, [selectedPieceTransform]);
+
+  // Handle selected piece changes (create/remove piece mesh)
+  useEffect(() => {
+    if (!sceneRef.current) return;
+    
+    const scene = sceneRef.current;
+    
+    // Remove existing selected piece if any
+    if (selectedPieceMeshRef.current) {
+      scene.remove(selectedPieceMeshRef.current);
+      selectedPieceMeshRef.current = null;
+    }
+    
+    // If no piece selected, we're done
+    if (!selectedPiece || !puzzlePieces || !puzzlePieces[selectedPiece]) {
+      return;
+    }
+    
+    // Create new selected piece
+    const pieceCoordinates = puzzlePieces[selectedPiece];
+    const pieceGroup = new THREE.Group();
+    const pieceColor = getPieceColor(selectedPiece);
+    const pieceMaterial = new THREE.MeshStandardMaterial({ 
+      color: pieceColor,
+      metalness: 0.6,
+      roughness: 0.2,
+      transparent: true,
+      opacity: 0.85
+    });
+
+    const sphereRadius = 0.35;
+    const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+
+    pieceCoordinates.forEach(([i, j, k]: [number, number, number]) => {
+      const worldPos = fccToWorld(i, j, k);
+      const sphere = new THREE.Mesh(sphereGeometry, pieceMaterial);
+      sphere.position.set(worldPos.x, worldPos.y, worldPos.z);
+      sphere.castShadow = true;
+      sphere.receiveShadow = true;
+      pieceGroup.add(sphere);
+    });
+
+    // Set initial position
+    if (selectedPieceTransform) {
+      pieceGroup.position.copy(selectedPieceTransform.position);
+      pieceGroup.rotation.copy(selectedPieceTransform.rotation);
+    } else {
+      // Default position above container center
+      const containerCenter = new THREE.Vector3();
+      if (containerPoints.length > 0) {
+        containerPoints.forEach(point => containerCenter.add(point));
+        containerCenter.divideScalar(containerPoints.length);
+      }
+      pieceGroup.position.set(containerCenter.x, containerCenter.y + 3, containerCenter.z);
+      
+      setSelectedPieceTransform({
+        position: pieceGroup.position.clone(),
+        rotation: pieceGroup.rotation.clone(),
+        snappedToContainer: null,
+        activeSphereIndex: 0,
+        candidateSnapTarget: null,
+        isSnapped: false
+      });
+    }
+
+    // Set userData for interaction
+    (pieceGroup as any).userData = { 
+      type: 'selectedPiece', 
+      piece: selectedPiece,
+      interactive: true
+    };
+
+    pieceGroup.children.forEach((sphere) => {
+      (sphere as any).userData = {
+        type: 'selectedPiece',
+        piece: selectedPiece,
+        interactive: true
+      };
+    });
+
+    scene.add(pieceGroup);
+    selectedPieceMeshRef.current = pieceGroup;
+    
+    console.log(`Selected piece: ${selectedPiece}`);
+  }, [selectedPiece, puzzlePieces, containerPoints, setSelectedPieceTransform]);
 
   // Mouse interaction handlers
   useEffect(() => {
@@ -791,6 +793,134 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       });
     };
 
+    // SNAP PHASE FUNCTIONS
+    const attemptSnap = () => {
+      if (!selectedPieceMeshRef.current || !selectedPiece || !puzzlePieces) return null;
+      
+      const pieceCoordinates = puzzlePieces[selectedPiece];
+      const activeSpherePos = getActiveSpherePosition(selectedPieceMeshRef.current, dragState.activeSphereIndex);
+      
+      // Find closest container cell within snap radius
+      let closestCell: { point: THREE.Vector3; index: number } | null = null;
+      let closestDistance = Infinity;
+      
+      containerPoints.forEach((point, index) => {
+        const distance = activeSpherePos.distanceTo(point);
+        if (distance < SNAP_RADIUS && distance < closestDistance) {
+          closestDistance = distance;
+          closestCell = { point, index };
+        }
+      });
+      
+      if (!closestCell) return null; // No cell within snap radius
+      
+      // Calculate where piece would be positioned if Active Sphere snaps to this cell
+      const snapOffset = new THREE.Vector3().copy(closestCell!.point).sub(activeSpherePos);
+      const proposedPiecePosition = selectedPieceMeshRef.current.position.clone().add(snapOffset);
+      
+      // Validate that all spheres of the piece would fit without overlaps
+      const isValidSnap = validateSnapPosition(pieceCoordinates, proposedPiecePosition, selectedPieceMeshRef.current.rotation);
+      
+      if (!isValidSnap) return null; // Snap would cause overlaps
+      
+      return {
+        targetCell: new THREE.Vector3().copy(closestCell!.point),
+        finalPiecePosition: proposedPiecePosition,
+        finalPieceRotation: selectedPieceMeshRef.current.rotation.clone()
+      };
+    };
+
+    const validateSnapPosition = (pieceCoordinates: number[][], proposedPosition: THREE.Vector3, rotation: THREE.Euler): boolean => {
+      // Convert piece coordinates to world positions at proposed location
+      const proposedSpherePositions: THREE.Vector3[] = [];
+      
+      pieceCoordinates.forEach((coord: number[]) => {
+        const [i, j, k] = coord as [number, number, number];
+        const localPos = fccToWorld(i, j, k);
+        
+        // Convert to THREE.Vector3 and apply rotation
+        const rotatedPos = new THREE.Vector3(localPos.x, localPos.y, localPos.z);
+        rotatedPos.applyEuler(rotation);
+        
+        // Apply translation
+        const worldPos = rotatedPos.add(proposedPosition);
+        proposedSpherePositions.push(worldPos);
+      });
+      
+      // Check if any proposed sphere position conflicts with existing placed pieces
+      for (const spherePos of proposedSpherePositions) {
+        // Check against container bounds
+        const isInContainer = containerPoints.some(containerPoint => 
+          spherePos.distanceTo(containerPoint) < 0.1 // Small tolerance for floating point
+        );
+        
+        if (!isInContainer) return false; // Sphere would be outside container
+        
+        // Check against placed pieces
+        for (const placedPiece of placedPieces) {
+          for (const occupiedCell of placedPiece.occupiedCells) {
+            if (spherePos.distanceTo(occupiedCell) < 0.5) { // Overlap threshold
+              return false; // Would overlap with existing piece
+            }
+          }
+        }
+      }
+      
+      return true; // Valid snap position
+    };
+
+    const performSnapAnimation = (snapResult: any) => {
+      if (!selectedPieceMeshRef.current) return;
+      
+      // TODO: Implement smooth snap animation
+      // For now, immediately move to final position
+      selectedPieceMeshRef.current.position.copy(snapResult.finalPiecePosition);
+      selectedPieceMeshRef.current.rotation.copy(snapResult.finalPieceRotation);
+      
+      // Add piece to placed pieces
+      if (selectedPiece && puzzlePieces) {
+        const pieceCoordinates = puzzlePieces[selectedPiece];
+        const occupiedCells: THREE.Vector3[] = [];
+        
+        pieceCoordinates.forEach((coord: number[]) => {
+          const [i, j, k] = coord as [number, number, number];
+          const localPos = fccToWorld(i, j, k);
+          const rotatedPos = new THREE.Vector3(localPos.x, localPos.y, localPos.z);
+          rotatedPos.applyEuler(snapResult.finalPieceRotation);
+          const worldPos = rotatedPos.add(snapResult.finalPiecePosition);
+          occupiedCells.push(worldPos);
+        });
+        
+        const placedPiece = {
+          piece: selectedPiece,
+          position: snapResult.finalPiecePosition,
+          rotation: snapResult.finalPieceRotation,
+          id: `${selectedPiece}-${Date.now()}`,
+          occupiedCells
+        };
+        
+        // Add to store
+        useAppStore.getState().addPlacedPiece(placedPiece);
+        
+        // Clear selection
+        useAppStore.getState().setSelectedPiece(null);
+        setSelectedPieceTransform(null);
+      }
+      
+      // Reset drag state and re-enable controls
+      setDragState({
+        isDragging: false,
+        initialAnchor: null,
+        activeSphereIndex: 0,
+        easingStartTime: 0,
+        preDragTransform: null
+      });
+      
+      if (controlsRef.current) {
+        controlsRef.current.enabled = true;
+      }
+    };
+
     const handleMouseUp = (event: MouseEvent) => {
       if (event.button !== 0) return; // Only left mouse button
       
@@ -800,18 +930,29 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
           recordDragEnd(selectedPiece);
         }
         
-        // AC-7: Piece remains at final position on LMB release
-        // AC-3: Re-enable camera controls
-        setDragState({
-          isDragging: false,
-          initialAnchor: null,
-          activeSphereIndex: 0,
-          easingStartTime: 0,
-          preDragTransform: null
-        });
+        // SNAP PHASE: Check if piece should snap to container
+        let snapResult = null;
+        if (selectedPieceMeshRef.current && selectedPiece && puzzlePieces) {
+          snapResult = attemptSnap();
+        }
         
-        if (controlsRef.current) {
-          controlsRef.current.enabled = true;
+        if (snapResult) {
+          // Successful snap - animate to final position and update state
+          performSnapAnimation(snapResult);
+        } else {
+          // No snap - piece remains at current position (AC-7)
+          // AC-3: Re-enable camera controls
+          setDragState({
+            isDragging: false,
+            initialAnchor: null,
+            activeSphereIndex: 0,
+            easingStartTime: 0,
+            preDragTransform: null
+          });
+          
+          if (controlsRef.current) {
+            controlsRef.current.enabled = true;
+          }
         }
       }
     };
