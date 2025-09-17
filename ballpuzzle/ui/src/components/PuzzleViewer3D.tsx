@@ -291,16 +291,12 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       
       // Generate unique color for this piece
       const pieceIndex = Object.keys(puzzlePieces).indexOf(selectedPiece);
-      const hue = (pieceIndex * 137.508) % 360; // Golden angle for good color distribution
-      const color = new THREE.Color().setHSL(hue / 360, 0.9, 0.7); // Brighter: higher saturation and lightness
-      
       const pieceMaterial = new THREE.MeshStandardMaterial({ 
-        color: color,
+        color: 0x00BFFF, // Bright light blue (Deep Sky Blue)
         metalness: 0.3,
         roughness: 0.4,
-        envMapIntensity: 0.5,
-        transparent: false,
-        opacity: 1.0
+        transparent: true,
+        opacity: 0.6 // More transparent like original
       });
       
       // Create high-quality sphere for each coordinate in the piece
