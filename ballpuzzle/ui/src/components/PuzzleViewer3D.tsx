@@ -435,11 +435,22 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       
       selectedPieceMesh.castShadow = true;
       selectedPieceMesh.receiveShadow = true;
+      
+      // Set userData on parent group
       (selectedPieceMesh as any).userData = { 
         type: 'selectedPiece', 
         piece: selectedPiece,
         interactive: true
       };
+      
+      // Also set userData on all sphere children for raycasting
+      selectedPieceMesh.children.forEach((sphere) => {
+        (sphere as any).userData = { 
+          type: 'selectedPiece', 
+          piece: selectedPiece,
+          interactive: true
+        };
+      });
       
       scene.add(selectedPieceMesh);
       selectedPieceMeshRef.current = selectedPieceMesh;
@@ -555,7 +566,8 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       const boxMaterial = new THREE.LineBasicMaterial({ 
         color: 0x00ff00, 
         transparent: true, 
-        opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] 
+        opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex],
+        linewidth: 3
       });
       const boxWireframe = new THREE.LineSegments(
         new THREE.EdgesGeometry(boxGeometry), 
@@ -595,16 +607,30 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       if (selectedPieceMeshRef.current && dragState.isDragging) {
         const activeSpherePos = getActiveSpherePosition(selectedPieceMeshRef.current, dragState.activeSphereIndex);
         
-        const sphereGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const sphereGeometry = new THREE.SphereGeometry(0.2, 12, 12);
         const sphereMaterial = new THREE.MeshBasicMaterial({ 
           color: 0xff0000, 
           transparent: true, 
-          opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] 
+          opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] * 0.8
         });
         const sphereMarker = new THREE.Mesh(sphereGeometry, sphereMaterial);
         sphereMarker.position.copy(activeSpherePos);
         sphereMarker.name = 'activeSphereMarker';
         debugGroup.add(sphereMarker);
+        
+        // Add wireframe outline for better visibility
+        const wireframeGeometry = new THREE.SphereGeometry(0.22, 12, 12);
+        const wireframeMaterial = new THREE.LineBasicMaterial({ 
+          color: 0xff4444, 
+          transparent: true, 
+          opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] 
+        });
+        const wireframe = new THREE.LineSegments(
+          new THREE.EdgesGeometry(wireframeGeometry), 
+          wireframeMaterial
+        );
+        wireframe.position.copy(activeSpherePos);
+        debugGroup.add(wireframe);
         
         // Add tag near the piece
         const tagDiv = document.createElement('div');
@@ -628,7 +654,8 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
             const lineMaterial = new THREE.LineBasicMaterial({ 
               color: 0xffff00, 
               transparent: true, 
-              opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] * 0.5 
+              opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] * 0.8,
+              linewidth: 2
             });
             const easingLine = new THREE.Line(lineGeometry, lineMaterial);
             easingLine.name = 'easingLine';
@@ -651,7 +678,8 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
           const clampLineMaterial = new THREE.LineBasicMaterial({ 
             color: 0xff8800, 
             transparent: true, 
-            opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex] 
+            opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex],
+            linewidth: 3
           });
           const clampLine = new THREE.Line(clampLineGeometry, clampLineMaterial);
           clampLine.name = 'clampIndicator';
@@ -680,19 +708,26 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
       raycaster.setFromCamera(mouse, cameraRef.current);
-      const intersects = raycaster.intersectObjects(sceneRef.current.children);
+      const intersects = raycaster.intersectObjects(sceneRef.current.children, true); // recursive = true
 
-      console.log('Mouse down - intersects:', intersects.length, 'selectedPiece:', selectedPiece);
+      console.log('Mouse down debug:', {
+        intersectsCount: intersects.length,
+        selectedPiece: selectedPiece,
+        hasSelectedMesh: !!selectedPieceMeshRef.current
+      });
 
       if (intersects.length > 0) {
         const intersect = intersects[0];
         const userData = (intersect.object as any).userData;
         
-        console.log('Intersect userData:', userData);
+        console.log('Intersect debug:', {
+          userData: userData,
+          objectName: intersect.object.name,
+          objectType: intersect.object.type
+        });
         
         if (userData?.type === 'selectedPiece' && userData.interactive && selectedPiece) {
           // Start dragging the selected piece using Move (Pre-Snap) behavior
-          console.log('Starting drag for piece:', selectedPiece);
           event.preventDefault();
           
           const selectedMesh = selectedPieceMeshRef.current;
@@ -736,7 +771,6 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         return;
       }
       
-      console.log('Mouse move during drag - easingProgress will be calculated');
       
       const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -1074,31 +1108,93 @@ export default function PuzzleViewer3D({ containerPoints, placedPieces, onCellCl
         <div
           style={{
             position: "absolute",
-            top: "10px",
-            left: "10px",
-            backgroundColor: "rgba(0, 0, 0, 0.8)",
+            top: "16px",
+            left: "16px",
+            backgroundColor: "rgba(0, 0, 0, 0.9)",
             color: "#00ff00",
-            padding: "8px",
-            borderRadius: "4px",
-            fontFamily: "monospace",
-            fontSize: "11px",
+            padding: "16px 20px",
+            borderRadius: "8px",
+            fontFamily: "Consolas, 'Courier New', monospace",
+            fontSize: "14px",
+            lineHeight: "1.4",
             pointerEvents: "none",
             opacity: DEBUG_OPACITY_LEVELS[debugOpacityIndex],
-            zIndex: 1000
+            zIndex: 1000,
+            border: "2px solid #00ff00",
+            boxShadow: "0 4px 12px rgba(0, 255, 0, 0.3)",
+            minWidth: "280px"
           }}
         >
-          <div>🐛 DEBUG MODE</div>
-          <div>drag={dragState.isDragging ? "ON" : "OFF"}</div>
-          <div>cursor=({debugCursorPos.x.toFixed(0)},{debugCursorPos.y.toFixed(0)})</div>
+          <div style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#00ffff" }}>
+            🐛 MOVE DEBUG MODE
+          </div>
+          
+          <div style={{ marginBottom: "4px" }}>
+            <span style={{ color: "#ffff00" }}>Drag State:</span> {dragState.isDragging ? 
+              <span style={{ color: "#00ff00", fontWeight: "bold" }}>ACTIVE</span> : 
+              <span style={{ color: "#ff6666" }}>IDLE</span>
+            }
+          </div>
+          
+          <div style={{ marginBottom: "4px" }}>
+            <span style={{ color: "#ffff00" }}>Cursor:</span> ({debugCursorPos.x.toFixed(0)}, {debugCursorPos.y.toFixed(0)})
+          </div>
+          
+          <div style={{ marginBottom: "4px" }}>
+            <span style={{ color: "#ffff00" }}>Camera:</span> {controlsRef.current ? 
+              (controlsRef.current.enabled ? 
+                <span style={{ color: "#ff6666" }}>UNLOCKED</span> : 
+                <span style={{ color: "#00ff00" }}>LOCKED</span>
+              ) : "N/A"
+            }
+          </div>
+          
           {selectedPieceMeshRef.current && dragState.isDragging && (
             <>
-              <div>activeSphere={dragState.activeSphereIndex}</div>
-              <div>cameraLocked={controlsRef.current ? !controlsRef.current.enabled : false}</div>
-              <div>easingProgress={Math.min((performance.now() - dragState.easingStartTime) / EASING_DURATION_MS, 1.0).toFixed(2)}</div>
+              <div style={{ marginBottom: "4px" }}>
+                <span style={{ color: "#ffff00" }}>Active Sphere:</span> <span style={{ color: "#ff8800", fontWeight: "bold" }}>{dragState.activeSphereIndex}</span>
+              </div>
+              
+              <div style={{ marginBottom: "4px" }}>
+                <span style={{ color: "#ffff00" }}>Easing:</span> {Math.min((performance.now() - dragState.easingStartTime) / EASING_DURATION_MS, 1.0).toFixed(2)}
+                {Math.min((performance.now() - dragState.easingStartTime) / EASING_DURATION_MS, 1.0) < 1.0 && 
+                  <span style={{ color: "#ff8800" }}> (transitioning)</span>
+                }
+              </div>
+              
+              <div style={{ marginBottom: "4px" }}>
+                <span style={{ color: "#ffff00" }}>Movement AABB:</span> <span style={{ color: "#00ff00" }}>×{MOVEMENT_AABB_SCALE}</span>
+              </div>
             </>
           )}
-          <div style={{ marginTop: "4px", fontSize: "9px", opacity: 0.7 }}>
-            Alt+D: toggle | Alt+Shift+D: opacity
+          
+          {!selectedPiece && (
+            <div style={{ marginBottom: "4px", color: "#ff6666", fontStyle: "italic" }}>
+              No piece selected - click inventory to select
+            </div>
+          )}
+          
+          {selectedPiece && !selectedPieceMeshRef.current && (
+            <div style={{ marginBottom: "4px", color: "#ffaa00", fontStyle: "italic" }}>
+              Piece selected: {selectedPiece} (mesh loading...)
+            </div>
+          )}
+          
+          {selectedPiece && selectedPieceMeshRef.current && !dragState.isDragging && (
+            <div style={{ marginBottom: "4px", color: "#00ff00" }}>
+              Ready to drag: {selectedPiece}
+            </div>
+          )}
+          
+          <div style={{ 
+            marginTop: "12px", 
+            paddingTop: "8px", 
+            borderTop: "1px solid #00ff00", 
+            fontSize: "12px", 
+            color: "#aaffaa" 
+          }}>
+            <div>Alt+D: Toggle Debug</div>
+            <div>Alt+Shift+D: Opacity ({Math.round(DEBUG_OPACITY_LEVELS[debugOpacityIndex] * 100)}%)</div>
           </div>
         </div>
       )}
